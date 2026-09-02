@@ -1,0 +1,70 @@
+# ===== Secrets / environment =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ===== Go (backend) =====
+# Compiled binaries / build output
+/backend/bin/
+/backend/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+# Test binary / coverage
+*.test
+*.out
+coverage.txt
+coverage.html
+# Go workspace file
+go.work
+go.work.sum
+# vendor/ is intentionally NOT ignored — uncomment if you vendor deps
+# /backend/vendor/
+
+# ===== Node / frontend =====
+node_modules/
+/frontend/dist/
+/frontend/dist-ssr/
+/frontend/.vite/
+/frontend/coverage/
+*.local
+# Vite/PWA generated service worker
+/frontend/dev-dist/
+/frontend/public/sw.js
+/frontend/public/workbox-*.js
+
+# ===== Logs =====
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ===== Docker / infra =====
+# Local compose overrides and data volumes
+docker-compose.override.yml
+/data/
+/pgdata/
+/caddy_data/
+/caddy_config/
+
+# ===== Editors / IDE =====
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== Claude Code =====
+.claude/settings.local.json
