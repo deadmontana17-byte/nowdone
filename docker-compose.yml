@@ -8,8 +8,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-nowdone}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+ #   ports:
+ #     - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nowdone}"]
       interval: 5s
@@ -29,6 +29,9 @@ services:
       DB_DSN: ${DB_DSN}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      # Optional: reverse-proxy origin for the Telegram Bot API (e.g. a Cloudflare
+      # Worker). Empty => https://api.telegram.org.
+      TELEGRAM_API_PROXY_URL: ${TELEGRAM_API_PROXY_URL}
       BOT_USERNAME: ${BOT_USERNAME:?BOT_USERNAME is required}
       SITE_URL: ${SITE_URL:?SITE_URL is required}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
@@ -60,6 +63,7 @@ services:
       DB_DSN: ${DB_DSN}
       JWT_SECRET: ${JWT_SECRET}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_API_PROXY_URL: ${TELEGRAM_API_PROXY_URL}
       BOT_USERNAME: ${BOT_USERNAME}
       SITE_URL: ${SITE_URL}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
@@ -84,6 +88,7 @@ services:
       DB_DSN: ${DB_DSN}
       JWT_SECRET: ${JWT_SECRET}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_API_PROXY_URL: ${TELEGRAM_API_PROXY_URL}
       BOT_USERNAME: ${BOT_USERNAME}
       SITE_URL: ${SITE_URL}
 
@@ -97,7 +102,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "80:80"
+      - "3000:80"
 
 volumes:
   postgres_data:

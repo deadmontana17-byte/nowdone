@@ -18,15 +18,18 @@ import (
 
 // Bot wraps the Telegram Bot API client and its dependencies.
 type Bot struct {
-	api       *tgbotapi.BotAPI
-	auth      *service.AuthService
-	tasks     *service.TaskService
-	taskTypes *service.TaskTypeService
-	notes     *service.NoteService
-	users     *repository.UserRepository
-	openai    *service.OpenAIService
-	s3        *service.S3Service // may be nil if object storage is not configured
-	log       *slog.Logger
+	api *tgbotapi.BotAPI
+	// apiBaseURL is the Telegram API origin the client talks to (proxy or
+	// DefaultAPIURL); kept so file download URLs can be pointed at the proxy.
+	apiBaseURL string
+	auth       *service.AuthService
+	tasks      *service.TaskService
+	taskTypes  *service.TaskTypeService
+	notes      *service.NoteService
+	users      *repository.UserRepository
+	openai     *service.OpenAIService
+	s3         *service.S3Service // may be nil if object storage is not configured
+	log        *slog.Logger
 
 	// state holds per-chat conversation context (add-task / add-note flows and
 	// the id of the re-rendered "today" list message).
@@ -35,6 +38,7 @@ type Bot struct {
 
 func New(
 	api *tgbotapi.BotAPI,
+	apiBaseURL string,
 	auth *service.AuthService,
 	tasks *service.TaskService,
 	taskTypes *service.TaskTypeService,
@@ -45,16 +49,17 @@ func New(
 	log *slog.Logger,
 ) *Bot {
 	return &Bot{
-		api:       api,
-		auth:      auth,
-		tasks:     tasks,
-		taskTypes: taskTypes,
-		notes:     notes,
-		users:     users,
-		openai:    openai,
-		s3:        s3,
-		log:       log,
-		state:     newStateStore(),
+		api:        api,
+		apiBaseURL: apiBaseURL,
+		auth:       auth,
+		tasks:      tasks,
+		taskTypes:  taskTypes,
+		notes:      notes,
+		users:      users,
+		openai:     openai,
+		s3:         s3,
+		log:        log,
+		state:      newStateStore(),
 	}
 }
 

@@ -13,14 +13,13 @@ import (
 	// whether the host/container ships /usr/share/zoneinfo.
 	_ "time/tzdata"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-
 	"nowdone/internal/config"
 	"nowdone/internal/db"
 	"nowdone/internal/handlers"
 	"nowdone/internal/logger"
 	"nowdone/internal/repository"
 	"nowdone/internal/service"
+	"nowdone/internal/telegram"
 )
 
 func main() {
@@ -61,7 +60,7 @@ func main() {
 
 	// Lightweight Bot API client so the API can push PIN-reset codes straight to
 	// a user's Telegram chat (no bot /start, no deep link).
-	botAPI, err := tgbotapi.NewBotAPI(cfg.TelegramToken)
+	botAPI, err := telegram.NewBotAPI(cfg.TelegramToken, cfg.TelegramAPIURL)
 	if err != nil {
 		log.Error("init telegram bot api", "error", err)
 		os.Exit(1)

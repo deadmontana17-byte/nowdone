@@ -74,6 +74,7 @@ func (b *Bot) handleVoiceMessage(ctx context.Context, msg *tgbotapi.Message) {
 		b.reply(msg.Chat.ID, "Не удалось загрузить голосовое сообщение.")
 		return
 	}
+	fileURL = proxyFileURL(b.apiBaseURL, fileURL)
 
 	resp, err := http.Get(fileURL)
 	if err != nil {
@@ -160,6 +161,7 @@ func (b *Bot) ingestAttachment(ctx context.Context, msg *tgbotapi.Message) (mode
 	if err != nil {
 		return models.Attachment{}, fmt.Errorf("get file url: %w", err)
 	}
+	directURL = proxyFileURL(b.apiBaseURL, directURL)
 	// Photos/videos have no extension in their logical name; borrow it from the
 	// Telegram storage path so S3 stores a sensible content type.
 	if filepath.Ext(name) == "" {

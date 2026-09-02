@@ -10,10 +10,15 @@ import (
 
 // Config holds all runtime configuration for the api, bot and worker binaries.
 type Config struct {
-	Env             string
-	DBDSN           string
-	JWTSecret       string
-	TelegramToken   string
+	Env           string
+	DBDSN         string
+	JWTSecret     string
+	TelegramToken string
+	// TelegramAPIURL is the base URL for the Telegram Bot API. Defaults to
+	// https://api.telegram.org; set TELEGRAM_API_PROXY_URL to route Bot API
+	// traffic through a reverse proxy (e.g. a Cloudflare Worker) on networks
+	// where the official endpoint is blocked.
+	TelegramAPIURL  string
 	BotUsername     string
 	SiteURL         string
 	OpenAIAPIKey    string
@@ -38,18 +43,19 @@ type Config struct {
 // from the environment, never hardcoded, per project rules.
 func Load() (*Config, error) {
 	cfg := &Config{
-		Env:           getEnv("ENV", "production"),
-		DBDSN:         os.Getenv("DB_DSN"),
-		JWTSecret:     os.Getenv("JWT_SECRET"),
-		TelegramToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
-		BotUsername:   os.Getenv("BOT_USERNAME"),
-		SiteURL:       os.Getenv("SITE_URL"),
-		OpenAIAPIKey:  os.Getenv("OPENAI_API_KEY"),
-		S3AccessKeyID: os.Getenv("S3_ACCESS_KEY_ID"),
-		S3SecretKey:   os.Getenv("S3_SECRET_ACCESS_KEY"),
-		S3BucketName:  os.Getenv("S3_BUCKET_NAME"),
-		S3Endpoint:    os.Getenv("S3_ENDPOINT"),
-		S3Region:      getEnv("S3_REGION", "us-east-1"),
+		Env:            getEnv("ENV", "production"),
+		DBDSN:          os.Getenv("DB_DSN"),
+		JWTSecret:      os.Getenv("JWT_SECRET"),
+		TelegramToken:  os.Getenv("TELEGRAM_BOT_TOKEN"),
+		TelegramAPIURL: getEnv("TELEGRAM_API_PROXY_URL", "https://api.telegram.org"),
+		BotUsername:    os.Getenv("BOT_USERNAME"),
+		SiteURL:        os.Getenv("SITE_URL"),
+		OpenAIAPIKey:   os.Getenv("OPENAI_API_KEY"),
+		S3AccessKeyID:  os.Getenv("S3_ACCESS_KEY_ID"),
+		S3SecretKey:    os.Getenv("S3_SECRET_ACCESS_KEY"),
+		S3BucketName:   os.Getenv("S3_BUCKET_NAME"),
+		S3Endpoint:     os.Getenv("S3_ENDPOINT"),
+		S3Region:       getEnv("S3_REGION", "us-east-1"),
 		// Optional. Base URL for building public attachment links (e.g. a
 		// website/virtual-hosted endpoint). When empty, links fall back to
 		// "{S3_ENDPOINT}/{S3_BUCKET_NAME}".

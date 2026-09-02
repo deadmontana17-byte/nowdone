@@ -7,8 +7,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-
 	"nowdone/internal/config"
 	"nowdone/internal/db"
 	"nowdone/internal/logger"
@@ -35,7 +33,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	api, err := tgbotapi.NewBotAPI(cfg.TelegramToken)
+	api, err := telegram.NewBotAPI(cfg.TelegramToken, cfg.TelegramAPIURL)
 	if err != nil {
 		log.Error("init telegram bot api", "error", err)
 		os.Exit(1)
@@ -69,7 +67,7 @@ func main() {
 	noteSvc := service.NewNoteService(noteRepo, s3Svc, log)
 	openaiSvc := service.NewOpenAIService(cfg.OpenAIAPIKey)
 
-	bot := telegram.New(api, authSvc, taskSvc, taskTypeSvc, noteSvc, userRepo, openaiSvc, s3Svc, log)
+	bot := telegram.New(api, cfg.TelegramAPIURL, authSvc, taskSvc, taskTypeSvc, noteSvc, userRepo, openaiSvc, s3Svc, log)
 
 	log.Info("starting telegram bot")
 	if err := bot.Run(ctx); err != nil && err != context.Canceled {

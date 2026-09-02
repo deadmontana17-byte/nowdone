@@ -11,7 +11,6 @@ import (
 	// user's local zone even on a minimal container image.
 	_ "time/tzdata"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/robfig/cron/v3"
 
 	"nowdone/internal/config"
@@ -19,6 +18,7 @@ import (
 	"nowdone/internal/logger"
 	"nowdone/internal/repository"
 	"nowdone/internal/service"
+	"nowdone/internal/telegram"
 	"nowdone/internal/worker"
 )
 
@@ -40,7 +40,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	api, err := tgbotapi.NewBotAPI(cfg.TelegramToken)
+	api, err := telegram.NewBotAPI(cfg.TelegramToken, cfg.TelegramAPIURL)
 	if err != nil {
 		log.Error("init telegram bot api", "error", err)
 		os.Exit(1)
