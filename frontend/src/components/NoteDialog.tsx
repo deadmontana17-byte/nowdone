@@ -104,26 +104,14 @@ export function NoteDialog({ open, onClose, note }: NoteDialogProps) {
   }
 
   return (
-    <Dialog
-      open={open}
-      onClose={handleClose}
-      fullWidth
-      maxWidth="sm"
-      // See TaskFormDialog: recompute the outlined TextField's border notch
-      // after the open transition settles, so it never lands on a stale
-      // mid-transition measurement (which shows as the label "crossed out").
-      TransitionProps={{ onEntered: () => window.dispatchEvent(new Event('resize')) }}
-    >
+    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
       <DialogTitle>{note ? 'Редактировать заметку' : 'Новая заметка'}</DialogTitle>
-      <DialogContent
-        // See TaskFormDialog: recompute the notch after every field focus
-        // (delegated — React's synthetic onFocus bubbles), not just once on
-        // the dialog's own opening transition.
-        onFocus={() => window.setTimeout(() => window.dispatchEvent(new Event('resize')), 150)}
-      >
+      <DialogContent>
         <Stack spacing={2.5} sx={{ mt: 1 }}>
-          <TextField label="Заголовок" value={title} onChange={(e) => setTitle(e.target.value)} fullWidth />
-          <TextField label="Содержание" value={content} onChange={(e) => setContent(e.target.value)} multiline minRows={5} fullWidth />
+          {/* See TaskFormDialog: shrink:true locks the label's small position
+              and the outline's notch together from the first paint. */}
+          <TextField label="Заголовок" value={title} onChange={(e) => setTitle(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
+          <TextField label="Содержание" value={content} onChange={(e) => setContent(e.target.value)} multiline minRows={5} fullWidth InputLabelProps={{ shrink: true }} />
           <ChecklistEditor items={checklist} onChange={setChecklist} />
           <Box>
             <Typography variant="caption" color="text.secondary">Вложения</Typography>

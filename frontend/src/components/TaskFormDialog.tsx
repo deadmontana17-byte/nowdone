@@ -149,30 +149,23 @@ export function TaskFormDialog({ open, onClose, task, defaultDate, taskTypes }: 
   }
 
   return (
-    <Dialog
-      open={open}
-      onClose={handleClose}
-      fullWidth
-      maxWidth="sm"
-      // Autofocusing a field while the dialog is still animating in (and the
-      // mobile keyboard is opening) raced the outlined TextField's border-notch
-      // measurement against the transition, leaving the label crossed out by
-      // the outline. Recomputing once the transition actually settles fixes it
-      // for every field, not just an autofocused one.
-      TransitionProps={{ onEntered: () => window.dispatchEvent(new Event('resize')) }}
-    >
+    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
       <DialogTitle>{task ? 'Редактировать задачу' : 'Новая задача'}</DialogTitle>
-      <DialogContent
-        // Delegated: catches focus from any descendant TextField (React's
-        // synthetic onFocus bubbles). The dialog-open fix above only ever
-        // fires once; a field can be focused — and the mobile keyboard can
-        // open, resizing/zooming the viewport — at any later point too, so
-        // recompute the notch after every focus, not just the dialog's own
-        // opening transition.
-        onFocus={() => window.setTimeout(() => window.dispatchEvent(new Event('resize')), 150)}
-      >
+      <DialogContent>
         <Stack spacing={2.5} sx={{ mt: 1 }}>
-          <TextField label="Название" value={title} onChange={(e) => setTitle(e.target.value)} fullWidth />
+          {/* InputLabelProps shrink:true locks both the label's small
+              "floating" position and the outline's notch to the same fixed
+              state from the first paint, instead of deriving them from
+              filled/focused (which briefly disagree on some mobile browsers
+              — the outline stays un-notched while the label is already
+              shown small, so the border visually crosses the label text). */}
+          <TextField
+            label="Название"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            fullWidth
+            InputLabelProps={{ shrink: true }}
+          />
 
           {/* No placeholder — just the "Описание" label; the field opens empty. */}
           <TextField
@@ -182,6 +175,7 @@ export function TaskFormDialog({ open, onClose, task, defaultDate, taskTypes }: 
             multiline
             minRows={3}
             fullWidth
+            InputLabelProps={{ shrink: true }}
           />
 
           <ChecklistEditor items={checklist} onChange={setChecklist} />
