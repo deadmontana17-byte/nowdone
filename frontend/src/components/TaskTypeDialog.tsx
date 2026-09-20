@@ -67,11 +67,10 @@ export function TaskTypeDialog({ open, onClose }: TaskTypeDialogProps) {
           // the panel never spills off-screen.
           marginThreshold={8}
           transitionDuration={0}
-          // maxHeight only — no fixed/forced width. Emoji Mart sizes itself
-          // (see the Picker comment below): letting it size itself and the
-          // Popover just wrap that size is what keeps the two in agreement.
+          // maxWidth is only a last-resort safety net now — see below, the
+          // Picker itself is sized to comfortably fit under it on any phone.
           PaperProps={{
-            sx: { maxWidth: '95vw', maxHeight: '70vh', overflow: 'auto' },
+            sx: { maxWidth: '92vw', maxHeight: '70vh', overflow: 'auto' },
           }}
         >
           {/* No dynamicWidth: it sizes the grid off a ResizeObserver reading of
@@ -79,15 +78,19 @@ export function TaskTypeDialog({ open, onClose }: TaskTypeDialogProps) {
               landing on roughly half the panel's actual final width — emoji
               only filled half the window, and the tap coordinates it computed
               from that wrong width no longer lined up with what was on
-              screen, hence the wrong-emoji-selected bug. Without it, Emoji
-              Mart lays itself out from perLine × emojiButtonSize directly (no
-              measurement step), so what's drawn and what's tappable always
-              match. A bigger emojiButtonSize than the ~36px default still
-              gives comfortably large touch targets. */}
+              screen, hence the wrong-emoji-selected bug. Without dynamicWidth,
+              Emoji Mart instead lays itself out at a fixed intrinsic width of
+              perLine × emojiButtonSize (no measurement step, so what's drawn
+              and what's tappable always match) — but that width doesn't
+              shrink to fit the screen on its own, so perLine × emojiButtonSize
+              is kept small enough (6 × 40 ≈ 260px incl. padding) to fit even
+              a narrow ~320px-wide phone with room for the Popover's own
+              margins, however this button happens to sit on screen. Still a
+              comfortably large 40px touch target per emoji. */}
           <Picker
             data={data}
             theme={muiTheme.palette.mode}
-            perLine={8}
+            perLine={6}
             emojiButtonSize={40}
             emojiSize={24}
             onEmojiSelect={(e: { native: string }) => {
