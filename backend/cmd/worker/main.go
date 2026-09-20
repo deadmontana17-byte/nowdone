@@ -40,7 +40,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	api, err := telegram.NewBotAPI(cfg.TelegramToken, cfg.TelegramAPIURL)
+	api, err := telegram.NewBotAPI(cfg.TelegramToken, cfg.TelegramAPIURL, telegram.NewHTTPClient())
 	if err != nil {
 		log.Error("init telegram bot api", "error", err)
 		os.Exit(1)

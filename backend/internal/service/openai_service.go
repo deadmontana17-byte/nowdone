@@ -6,8 +6,34 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
+
+	"nowdone/pkg/retry"
+)
+
+const (
+	chatCompletionsURL = "https://api.openai.com/v1/chat/completions"
+	transcriptionsURL  = "https://api.openai.com/v1/audio/transcriptions"
+)
+
+// Per-call retry policies. Both endpoints are effectively idempotent for our
+// use (we send the same prompt / audio and read the answer), so a transient
+// network failure or a 429 / 5xx is safe to retry with backoff.
+var (
+	intentRetry = retry.Policy{
+		Attempts:       3,
+		BaseDelay:      500 * time.Millisecond,
+		MaxDelay:       4 * time.Second,
+		AttemptTimeout: 20 * time.Second,
+	}
+	transcribeRetry = retry.Policy{
+		Attempts:       2,
+		BaseDelay:      time.Second,
+		MaxDelay:       5 * time.Second,
+		AttemptTimeout: 45 * time.Second,
+	}
 )
 
 // Intent is the structured result of parsing a user's free-form Telegram
@@ -37,12 +63,20 @@ If a field is not applicable, use an empty string.`
 type OpenAIService struct {
 	apiKey string
 	http   *http.Client
+	log    *slog.Logger
 }
 
-func NewOpenAIService(apiKey string) *OpenAIService {
+// NewOpenAIService builds the service. A nil logger falls back to
+// slog.Default(). The http.Client keeps a generous backstop timeout; the real
+// per-attempt bound comes from the retry policy's AttemptTimeout.
+func NewOpenAIService(apiKey string, log *slog.Logger) *OpenAIService {
+	if log == nil {
+		log = slog.Default()
+	}
 	return &OpenAIService{
 		apiKey: apiKey,
-		http:   &http.Client{Timeout: 20 * time.Second},
+		http:   &http.Client{Timeout: 60 * time.Second},
+		log:    log,
 	}
 }
 
@@ -73,6 +107,8 @@ type chatCompletionResponse struct {
 // date-time as "YYYY-MM-DDTHH:MM", used to resolve relative dates and reminder
 // times.
 func (s *OpenAIService) ParseIntent(ctx context.Context, userMessage string, nowRef string) (*Intent, error) {
+	start := time.Now()
+
 	reqBody := chatCompletionRequest{
 		Model: "gpt-4o-mini",
 		Messages: []chatMessage{
@@ -82,31 +118,17 @@ func (s *OpenAIService) ParseIntent(ctx context.Context, userMessage string, now
 		ResponseFormat: &responseFormat{Type: "json_object"},
 		Temperature:    0,
 	}
-
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
+	respBody, err := retry.DoValue(ctx, intentRetry, func(ctx context.Context) ([]byte, error) {
+		return s.postJSON(ctx, chatCompletionsURL, body)
+	})
+	s.logCall("parse_intent", start, err)
 	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+s.apiKey)
-
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("call openai: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("openai returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, err
 	}
 
 	var completion chatCompletionResponse
@@ -129,36 +151,24 @@ func (s *OpenAIService) ParseIntent(ctx context.Context, userMessage string, now
 // already offers built-in STT for some clients, but we fall back to this for
 // reliability across all clients.
 func (s *OpenAIService) TranscribeVoice(ctx context.Context, audioBytes []byte, filename string) (string, error) {
-	var buf bytes.Buffer
-	boundary := "nowdoneboundary"
-	writeField := func(name, value string) {
-		fmt.Fprintf(&buf, "--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n", boundary, name, value)
-	}
+	start := time.Now()
 
-	writeField("model", "whisper-1")
+	const boundary = "nowdoneboundary"
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "--%s\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-1\r\n", boundary)
 	fmt.Fprintf(&buf, "--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: audio/ogg\r\n\r\n", boundary, filename)
 	buf.Write(audioBytes)
 	fmt.Fprintf(&buf, "\r\n--%s--\r\n", boundary)
+	// Snapshot the body so each retry attempt sends a fresh reader.
+	multipartBody := buf.Bytes()
+	contentType := "multipart/form-data; boundary=" + boundary
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/audio/transcriptions", &buf)
+	respBody, err := retry.DoValue(ctx, transcribeRetry, func(ctx context.Context) ([]byte, error) {
+		return s.post(ctx, transcriptionsURL, contentType, multipartBody)
+	})
+	s.logCall("transcribe_voice", start, err)
 	if err != nil {
-		return "", fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
-	req.Header.Set("Authorization", "Bearer "+s.apiKey)
-
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("call whisper: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("whisper returned %d: %s", resp.StatusCode, string(respBody))
+		return "", err
 	}
 
 	var result struct {
@@ -168,4 +178,51 @@ func (s *OpenAIService) TranscribeVoice(ctx context.Context, audioBytes []byte, 
 		return "", fmt.Errorf("unmarshal transcription: %w", err)
 	}
 	return result.Text, nil
+}
+
+// postJSON is post with a JSON content type.
+func (s *OpenAIService) postJSON(ctx context.Context, url string, body []byte) ([]byte, error) {
+	return s.post(ctx, url, "application/json", body)
+}
+
+// post issues one authenticated POST and returns the response body. A 429 or
+// 5xx is returned as a plain (retryable) error; every other non-200 is wrapped
+// with retry.Stop so the caller fails fast instead of hammering a bad request.
+func (s *OpenAIService) post(ctx context.Context, url, contentType string, body []byte) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, retry.Stop(fmt.Errorf("build request: %w", err))
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Authorization", "Bearer "+s.apiKey)
+
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		return respBody, nil
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
+		return nil, fmt.Errorf("openai returned %d: %s", resp.StatusCode, string(respBody))
+	default:
+		return nil, retry.Stop(fmt.Errorf("openai returned %d: %s", resp.StatusCode, string(respBody)))
+	}
+}
+
+// logCall records one structured line per OpenAI request with its duration.
+func (s *OpenAIService) logCall(op string, start time.Time, err error) {
+	elapsed := time.Since(start)
+	if err != nil {
+		s.log.Error("openai call failed", "op", op, "elapsed_ms", elapsed.Milliseconds(), "error", err)
+		return
+	}
+	s.log.Info("openai call", "op", op, "elapsed_ms", elapsed.Milliseconds())
 }

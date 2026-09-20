@@ -29,7 +29,7 @@ var (
 // chat. Implemented by *TelegramCodeSender in the API process; the bot/worker
 // pass nil since they never originate a reset from the site.
 type ResetCodeSender interface {
-	SendResetCode(chatID int64, code string) error
+	SendResetCode(ctx context.Context, chatID int64, code string) error
 }
 
 // AuthService implements Telegram deep-link login, JWT issuance and PIN management.
@@ -85,7 +85,7 @@ func (s *AuthService) GenerateResetCode(ctx context.Context, userID uuid.UUID) (
 	}
 
 	if s.sender != nil {
-		if err := s.sender.SendResetCode(user.TelegramID, code); err != nil {
+		if err := s.sender.SendResetCode(ctx, user.TelegramID, code); err != nil {
 			return "", fmt.Errorf("send reset code: %w", err)
 		}
 	}

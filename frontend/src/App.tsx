@@ -11,8 +11,7 @@ import { NotesPage } from '@/pages/NotesPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { useAuthStore } from '@/store/authStore';
 import { useUiStore } from '@/store/uiStore';
-import { fetchMe, updateSettings } from '@/api/auth';
-import { detectTimezone } from '@/utils/datetime';
+import { fetchMe, syncBrowserTimezone } from '@/api/auth';
 
 export default function App() {
   const { setUser, setInitializing } = useAuthStore();
@@ -20,22 +19,10 @@ export default function App() {
 
   useEffect(() => {
     fetchMe()
-      .then(async ({ user }) => {
-        // New accounts keep the "UTC" default until the user opens Settings, so
-        // the streak / character would roll over at UTC midnight instead of the
-        // user's local midnight. Adopt the browser's zone once, silently.
-        const browserTz = detectTimezone();
-        if (user.timezone === 'UTC' && browserTz !== 'UTC') {
-          try {
-            const { user: synced } = await updateSettings({ timezone: browserTz });
-            setUser(synced);
-            return;
-          } catch {
-            // Non-fatal: fall back to the un-synced user; Settings still works.
-          }
-        }
-        setUser(user);
-      })
+      // New accounts keep the "UTC" default until the user opens Settings, so
+      // the streak / character would roll over at UTC midnight instead of the
+      // user's local midnight. Adopt the browser's zone once, silently.
+      .then(async ({ user }) => setUser(await syncBrowserTimezone(user)))
       .catch(() => setUser(null))
       .finally(() => setInitializing(false));
   }, [setUser, setInitializing]);

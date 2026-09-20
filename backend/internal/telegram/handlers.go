@@ -1,11 +1,10 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -39,17 +38,17 @@ func (b *Bot) handleTextMessage(ctx context.Context, msg *tgbotapi.Message) {
 		b.showTomorrow(ctx, chatID, msg.From.ID)
 		return
 	case btnAddTask:
-		b.beginAdd(chatID, modeAddTask)
+		b.beginAdd(ctx, chatID, modeAddTask)
 		return
 	case btnAddNote:
-		b.beginAdd(chatID, modeAddNote)
+		b.beginAdd(ctx, chatID, modeAddNote)
 		return
 	case btnDonate:
 		b.resetToIdle(chatID)
-		b.sendDonateMenu(chatID)
+		b.sendDonateMenu(ctx, chatID)
 		return
 	case btnCancel:
-		b.cancelAdd(chatID)
+		b.cancelAdd(ctx, chatID)
 		return
 	}
 
@@ -68,33 +67,26 @@ func (b *Bot) handleTextMessage(ctx context.Context, msg *tgbotapi.Message) {
 // handleVoiceMessage downloads the voice note, transcribes it via Whisper, then
 // either feeds it into the active add flow or through the intent pipeline.
 func (b *Bot) handleVoiceMessage(ctx context.Context, msg *tgbotapi.Message) {
-	fileURL, err := b.api.GetFileDirectURL(msg.Voice.FileID)
+	fileURL, err := b.fileDirectURL(ctx, msg.Voice.FileID)
 	if err != nil {
 		b.log.Error("get voice file url", "error", err)
-		b.reply(msg.Chat.ID, "Не удалось загрузить голосовое сообщение.")
+		b.reply(ctx, msg.Chat.ID, "Не удалось загрузить голосовое сообщение.")
 		return
 	}
-	fileURL = proxyFileURL(b.apiBaseURL, fileURL)
 
-	resp, err := http.Get(fileURL)
+	// Context-bounded, size-capped, retried download — a stalled fetch now fails
+	// fast instead of wedging this handler forever.
+	audioBytes, _, err := b.downloadFile(ctx, fileURL)
 	if err != nil {
 		b.log.Error("download voice file", "error", err)
-		b.reply(msg.Chat.ID, "Не удалось загрузить голосовое сообщение.")
-		return
-	}
-	defer resp.Body.Close()
-
-	audioBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		b.log.Error("read voice file", "error", err)
-		b.reply(msg.Chat.ID, "Не удалось прочитать голосовое сообщение.")
+		b.reply(ctx, msg.Chat.ID, "Не удалось загрузить голосовое сообщение.")
 		return
 	}
 
 	transcript, err := b.openai.TranscribeVoice(ctx, audioBytes, "voice.ogg")
 	if err != nil {
 		b.log.Error("transcribe voice", "error", err)
-		b.reply(msg.Chat.ID, "Не удалось распознать голосовое сообщение.")
+		b.reply(ctx, msg.Chat.ID, "Не удалось распознать голосовое сообщение.")
 		return
 	}
 
@@ -113,18 +105,18 @@ func (b *Bot) handleMediaMessage(ctx context.Context, msg *tgbotapi.Message) {
 	chatID := msg.Chat.ID
 
 	if m := b.mode(chatID); m != modeAddTask && m != modeAddNote {
-		b.reply(chatID, "Чтобы прикрепить файл, сначала выберите «➕ Добавить задачу» или «📝 Добавить заметку».")
+		b.reply(ctx, chatID, "Чтобы прикрепить файл, сначала выберите «➕ Добавить задачу» или «📝 Добавить заметку».")
 		return
 	}
 	if b.s3 == nil {
-		b.reply(chatID, "Хранилище файлов не настроено — вложение не сохранено.")
+		b.reply(ctx, chatID, "Хранилище файлов не настроено — вложение не сохранено.")
 		return
 	}
 
 	att, err := b.ingestAttachment(ctx, msg)
 	if err != nil {
 		b.log.Error("ingest attachment", "chat_id", chatID, "error", err)
-		b.reply(chatID, "Не удалось сохранить вложение. Попробуйте ещё раз.")
+		b.reply(ctx, chatID, "Не удалось сохранить вложение. Попробуйте ещё раз.")
 		return
 	}
 
@@ -132,7 +124,7 @@ func (b *Bot) handleMediaMessage(ctx context.Context, msg *tgbotapi.Message) {
 
 	// Acknowledge single-file uploads; stay quiet for albums to avoid spam.
 	if msg.MediaGroupID == "" {
-		b.replyPlain(chatID, "📎 Вложение добавлено. Отправьте текст (заголовок) или нажмите «Готово».")
+		b.replyPlain(ctx, chatID, "📎 Вложение добавлено. Отправьте текст (заголовок) или нажмите «Готово».")
 	}
 }
 
@@ -157,11 +149,10 @@ func (b *Bot) ingestAttachment(ctx context.Context, msg *tgbotapi.Message) (mode
 		return models.Attachment{}, fmt.Errorf("message carries no supported attachment")
 	}
 
-	directURL, err := b.api.GetFileDirectURL(fileID)
+	directURL, err := b.fileDirectURL(ctx, fileID)
 	if err != nil {
 		return models.Attachment{}, fmt.Errorf("get file url: %w", err)
 	}
-	directURL = proxyFileURL(b.apiBaseURL, directURL)
 	// Photos/videos have no extension in their logical name; borrow it from the
 	// Telegram storage path so S3 stores a sensible content type.
 	if filepath.Ext(name) == "" {
@@ -170,16 +161,14 @@ func (b *Bot) ingestAttachment(ctx context.Context, msg *tgbotapi.Message) (mode
 		}
 	}
 
-	resp, err := http.Get(directURL)
+	// Buffer the file (capped) with a bounded, retried download rather than
+	// streaming an unbounded, un-timed response body straight into S3.
+	fileBytes, _, err := b.downloadFile(ctx, directURL)
 	if err != nil {
 		return models.Attachment{}, fmt.Errorf("download file: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return models.Attachment{}, fmt.Errorf("download file: telegram returned %d", resp.StatusCode)
-	}
 
-	url, err := b.s3.Upload(ctx, name, resp.Body)
+	url, err := b.s3.Upload(ctx, name, bytes.NewReader(fileBytes))
 	if err != nil {
 		return models.Attachment{}, fmt.Errorf("upload to s3: %w", err)
 	}
@@ -207,7 +196,7 @@ func (b *Bot) resetToIdle(chatID int64) {
 }
 
 // beginAdd enters the add-task / add-note flow and shows the compose keyboard.
-func (b *Bot) beginAdd(chatID int64, m convMode) {
+func (b *Bot) beginAdd(ctx context.Context, chatID int64, m convMode) {
 	b.state.withLock(chatID, func(st *chatState) {
 		if st.dr != nil && st.dr.flush != nil {
 			st.dr.flush.Stop()
@@ -235,14 +224,14 @@ func (b *Bot) beginAdd(chatID int64, m convMode) {
 	msg := tgbotapi.NewMessage(chatID, prompt)
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	msg.ReplyMarkup = draftKeyboard()
-	if _, err := b.api.Send(msg); err != nil {
+	if _, err := b.send(ctx, msg); err != nil {
 		b.log.Error("send add prompt", "error", err)
 	}
 }
 
-func (b *Bot) cancelAdd(chatID int64) {
+func (b *Bot) cancelAdd(ctx context.Context, chatID int64) {
 	b.resetToIdle(chatID)
-	b.replyWithMenu(chatID, "Отменено.")
+	b.replyWithMenu(ctx, chatID, "Отменено.")
 }
 
 // stageDraft applies an optional text and/or attachment to the active draft and
@@ -265,7 +254,12 @@ func (b *Bot) stageDraft(ctx context.Context, chatID, telegramID int64, text str
 			st.dr.flush.Stop()
 		}
 		st.dr.flush = time.AfterFunc(draftFlushDelay, func() {
-			b.finalizeDraft(ctx, chatID, telegramID)
+			// The debounce fires ~1.5s after this update's handler has already
+			// returned and cancelled its context, so detach from it (keeping
+			// its values) and give the finalize work its own deadline.
+			fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 90*time.Second)
+			defer cancel()
+			b.finalizeDraft(fctx, chatID, telegramID)
 		})
 	})
 }
@@ -331,12 +325,12 @@ func (b *Bot) finalizeDraft(ctx context.Context, chatID, telegramID int64) {
 
 	user, err := b.users.GetByTelegramID(ctx, telegramID)
 	if err != nil {
-		b.replyWithMenu(chatID, "Сначала войдите через сайт NowDone, чтобы я знал, кому сохранять записи.")
+		b.replyWithMenu(ctx, chatID, "Сначала войдите через сайт NowDone, чтобы я знал, кому сохранять записи.")
 		return
 	}
 
 	if strings.TrimSpace(d.title) == "" && len(d.attachments) == 0 {
-		b.replyWithMenu(chatID, "Пустое сообщение — ничего не создал.")
+		b.replyWithMenu(ctx, chatID, "Пустое сообщение — ничего не создал.")
 		return
 	}
 	if strings.TrimSpace(d.title) == "" {
@@ -408,12 +402,12 @@ func (b *Bot) createNoteFromDraft(ctx context.Context, chatID int64, user *model
 	created, err := b.notes.Create(ctx, note)
 	if err != nil {
 		b.log.Error("create note from draft", "error", err)
-		b.replyWithMenu(chatID, "Не удалось сохранить заметку. Попробуйте ещё раз.")
+		b.replyWithMenu(ctx, chatID, "Не удалось сохранить заметку. Попробуйте ещё раз.")
 		return
 	}
 
-	b.replyWithMenu(chatID, "✅ Заметка сохранена.")
-	b.sendNoteCard(chatID, created)
+	b.replyWithMenu(ctx, chatID, "✅ Заметка сохранена.")
+	b.sendNoteCard(ctx, chatID, created)
 }
 
 // resolveSchedule asks the OpenAI intent parser to resolve, from a free-form
@@ -606,13 +600,13 @@ func (b *Bot) createTask(ctx context.Context, chatID int64, user *models.User, c
 	created, err := b.tasks.Create(ctx, task)
 	if err != nil {
 		b.log.Error("create task", "error", err)
-		b.replyWithMenu(chatID, "Не удалось создать задачу. Попробуйте ещё раз.")
+		b.replyWithMenu(ctx, chatID, "Не удалось создать задачу. Попробуйте ещё раз.")
 		return
 	}
 
-	b.replyWithMenu(chatID, fmt.Sprintf("✅ Задача добавлена на %s.%s",
+	b.replyWithMenu(ctx, chatID, fmt.Sprintf("✅ Задача добавлена на %s.%s",
 		date.Format("02.01.2006"), reminderSuffix(c.reminder, loc)))
-	b.sendTaskCard(chatID, loc, created)
+	b.sendTaskCard(ctx, chatID, loc, created)
 	// Keep whatever task list is currently on screen (today or tomorrow) in sync.
 	b.refreshTaskList(ctx, chatID, user)
 }
@@ -634,7 +628,7 @@ func (b *Bot) showTomorrow(ctx context.Context, chatID, telegramID int64) {
 func (b *Bot) showRelativeDay(ctx context.Context, chatID, telegramID int64, offsetDays int) {
 	user, err := b.users.GetByTelegramID(ctx, telegramID)
 	if err != nil {
-		b.replyWithMenu(chatID, "Сначала войдите через сайт NowDone.")
+		b.replyWithMenu(ctx, chatID, "Сначала войдите через сайт NowDone.")
 		return
 	}
 	date := dateOnly(time.Now().In(user.Location())).AddDate(0, 0, offsetDays)
@@ -643,7 +637,13 @@ func (b *Bot) showRelativeDay(ctx context.Context, chatID, telegramID int64, off
 
 // refreshTaskList re-renders the tracked list message in place after a task
 // mutation, for the day it currently shows. No-op if no list is on screen.
+//
+// It always drops this user's cached lists first: every caller reaches here
+// right after creating / toggling / deleting / rescheduling a task, so the
+// re-render must read fresh rows.
 func (b *Bot) refreshTaskList(ctx context.Context, chatID int64, user *models.User) {
+	b.listCache.invalidate(user.ID)
+
 	var (
 		has  bool
 		date time.Time
@@ -665,11 +665,16 @@ func (b *Bot) refreshTaskList(ctx context.Context, chatID int64, user *models.Us
 func (b *Bot) renderTaskList(ctx context.Context, chatID int64, user *models.User, date time.Time, inPlace bool) {
 	date = dateOnly(date)
 
-	tasks, err := b.tasks.ListRange(ctx, user.ID, date, date)
-	if err != nil {
-		b.log.Error("list tasks for day", "date", date.Format("2006-01-02"), "error", err)
-		b.replyWithMenu(chatID, "Не удалось загрузить задачи.")
-		return
+	tasks, cached := b.listCache.get(user.ID, date)
+	if !cached {
+		fetched, err := b.tasks.ListRange(ctx, user.ID, date, date)
+		if err != nil {
+			b.log.Error("list tasks for day", "date", date.Format("2006-01-02"), "error", err)
+			b.replyWithMenu(ctx, chatID, "Не удалось загрузить задачи.")
+			return
+		}
+		tasks = fetched
+		b.listCache.put(user.ID, date, tasks)
 	}
 
 	text := "📋 *" + dayLabel(date, user.Location()) + "* · " + date.Format("02.01.2006")
@@ -693,19 +698,19 @@ func (b *Bot) renderTaskList(ctx context.Context, chatID int64, user *models.Use
 		if inPlace {
 			edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, prevID, text, markup)
 			edit.ParseMode = tgbotapi.ModeMarkdown
-			if _, err := b.api.Send(edit); err == nil || strings.Contains(err.Error(), "not modified") {
+			if _, err := b.send(ctx, edit); err == nil || strings.Contains(err.Error(), "not modified") {
 				b.state.withLock(chatID, func(st *chatState) { st.listDate = date })
 				return
 			}
 			// Old message is gone / too old — fall through to a fresh post.
 		}
-		b.deleteMessage(chatID, prevID)
+		b.deleteMessage(ctx, chatID, prevID)
 	}
 
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	msg.ReplyMarkup = markup
-	sent, err := b.api.Send(msg)
+	sent, err := b.send(ctx, msg)
 	if err != nil {
 		b.log.Error("send task list", "error", err)
 		return
@@ -742,7 +747,7 @@ const tgCaptionLimit = 1000
 // the card is sent as that media with the card text as caption (Problem 1);
 // otherwise it is a plain text message. Any remaining attachments are listed as
 // links. loc is the viewer's timezone, used to render the reminder time.
-func (b *Bot) sendTaskCard(chatID int64, loc *time.Location, task *models.Task) {
+func (b *Bot) sendTaskCard(ctx context.Context, chatID int64, loc *time.Location, task *models.Task) {
 	markup := taskCardKeyboard(task.ID, task.IsDone)
 
 	if url, kind := primaryMedia(task.Attachments); url != "" {
@@ -750,7 +755,7 @@ func (b *Bot) sendTaskCard(chatID int64, loc *time.Location, task *models.Task) 
 		// Fallback text keeps the primary file as a link, so a card is never left
 		// with neither the media nor a link to it (Problem 2).
 		fallback := truncateRunes(renderTaskCardText(task, loc, ""), tgCaptionLimit)
-		b.sendMediaCard(chatID, url, kind, caption, fallback, &markup)
+		b.sendMediaCard(ctx, chatID, url, kind, caption, fallback, &markup)
 		return
 	}
 
@@ -758,7 +763,7 @@ func (b *Bot) sendTaskCard(chatID int64, loc *time.Location, task *models.Task) 
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	msg.DisableWebPagePreview = true
 	msg.ReplyMarkup = markup
-	if _, err := b.api.Send(msg); err != nil {
+	if _, err := b.send(ctx, msg); err != nil {
 		b.log.Error("send task card", "error", err)
 	}
 }
@@ -789,18 +794,18 @@ func renderTaskCardText(task *models.Task, loc *time.Location, skipURL string) s
 }
 
 // sendNoteCard is the note equivalent of sendTaskCard (no inline keyboard).
-func (b *Bot) sendNoteCard(chatID int64, note *models.Note) {
+func (b *Bot) sendNoteCard(ctx context.Context, chatID int64, note *models.Note) {
 	if url, kind := primaryMedia(note.Attachments); url != "" {
 		caption := truncateRunes(renderNoteCardText(note, url), tgCaptionLimit)
 		fallback := truncateRunes(renderNoteCardText(note, ""), tgCaptionLimit)
-		b.sendMediaCard(chatID, url, kind, caption, fallback, nil)
+		b.sendMediaCard(ctx, chatID, url, kind, caption, fallback, nil)
 		return
 	}
 
 	msg := tgbotapi.NewMessage(chatID, renderNoteCardText(note, ""))
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	msg.DisableWebPagePreview = true
-	if _, err := b.api.Send(msg); err != nil {
+	if _, err := b.send(ctx, msg); err != nil {
 		b.log.Error("send note card", "error", err)
 	}
 }
@@ -821,7 +826,7 @@ func renderNoteCardText(note *models.Note, skipURL string) string {
 // text message built from fallbackText — which, unlike caption, still lists the
 // primary file as a link, so the user is never left with neither the image nor a
 // link to it (Problem 2).
-func (b *Bot) sendMediaCard(chatID int64, url, kind, caption, fallbackText string, markup *tgbotapi.InlineKeyboardMarkup) {
+func (b *Bot) sendMediaCard(ctx context.Context, chatID int64, url, kind, caption, fallbackText string, markup *tgbotapi.InlineKeyboardMarkup) {
 	var media tgbotapi.Chattable
 	if kind == "video" {
 		v := tgbotapi.NewVideo(chatID, tgbotapi.FileURL(url))
@@ -841,7 +846,7 @@ func (b *Bot) sendMediaCard(chatID int64, url, kind, caption, fallbackText strin
 		media = p
 	}
 
-	if _, err := b.api.Send(media); err != nil {
+	if _, err := b.send(ctx, media); err != nil {
 		b.log.Error("send media card, falling back to text", "kind", kind, "url", url, "error", err)
 		text := fallbackText
 		if strings.TrimSpace(text) == "" {
@@ -853,7 +858,7 @@ func (b *Bot) sendMediaCard(chatID int64, url, kind, caption, fallbackText strin
 		if markup != nil {
 			msg.ReplyMarkup = *markup
 		}
-		if _, err := b.api.Send(msg); err != nil {
+		if _, err := b.send(ctx, msg); err != nil {
 			b.log.Error("send media card text fallback", "error", err)
 		}
 	}
@@ -981,7 +986,7 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 	data := cb.Data
 	switch {
 	case data == "list:refresh":
-		b.answerCallback(cb.ID, "")
+		b.answerCallback(ctx, cb.ID, "")
 		if user, err := b.users.GetByTelegramID(ctx, cb.From.ID); err == nil {
 			b.refreshTaskList(ctx, cb.Message.Chat.ID, user)
 		}
@@ -997,7 +1002,7 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 		// Legacy reminder buttons from messages sent before the "remind:" rename.
 		b.handleLegacyReminderCallback(ctx, cb)
 	default:
-		b.answerCallback(cb.ID, "")
+		b.answerCallback(ctx, cb.ID, "")
 	}
 }
 
@@ -1005,47 +1010,47 @@ func (b *Bot) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 func (b *Bot) handleTaskListCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 	_, action, id, ok := parseCallback(cb.Data)
 	if !ok || id == uuid.Nil {
-		b.answerCallback(cb.ID, "")
+		b.answerCallback(ctx, cb.ID, "")
 		return
 	}
 	chatID := cb.Message.Chat.ID
 
 	user, err := b.users.GetByTelegramID(ctx, cb.From.ID)
 	if err != nil {
-		b.answerCallback(cb.ID, "Вы не авторизованы.")
+		b.answerCallback(ctx, cb.ID, "Вы не авторизованы.")
 		return
 	}
 
 	switch action {
 	case "open":
-		b.answerCallback(cb.ID, "")
+		b.answerCallback(ctx, cb.ID, "")
 		task, err := b.tasks.Get(ctx, user.ID, id)
 		if err != nil {
-			b.replyPlain(chatID, "Задача не найдена — возможно, она уже удалена.")
+			b.replyPlain(ctx, chatID, "Задача не найдена — возможно, она уже удалена.")
 			b.refreshTaskList(ctx, chatID, user)
 			return
 		}
-		b.sendTaskCard(chatID, user.Location(), task)
+		b.sendTaskCard(ctx, chatID, user.Location(), task)
 
 	case "toggle":
 		task, err := b.tasks.Get(ctx, user.ID, id)
 		if err != nil {
-			b.answerCallback(cb.ID, "Задача не найдена.")
+			b.answerCallback(ctx, cb.ID, "Задача не найдена.")
 			b.refreshTaskList(ctx, chatID, user)
 			return
 		}
 		done := !task.IsDone
 		if _, err := b.tasks.Update(ctx, user.ID, id, repository.TaskUpdate{IsDone: &done}); err != nil {
 			b.log.Error("toggle task from list", "task_id", id, "error", err)
-			b.answerCallback(cb.ID, "Не удалось обновить статус.")
+			b.answerCallback(ctx, cb.ID, "Не удалось обновить статус.")
 			return
 		}
 		if done {
-			b.answerCallback(cb.ID, "Отмечено выполненной ✅")
-			b.replyPlain(chatID, fmt.Sprintf("✅ Задача «%s» выполнена!", task.Title))
+			b.answerCallback(ctx, cb.ID, "Отмечено выполненной ✅")
+			b.replyPlain(ctx, chatID, fmt.Sprintf("✅ Задача «%s» выполнена!", task.Title))
 		} else {
-			b.answerCallback(cb.ID, "Отметка снята")
-			b.replyPlain(chatID, fmt.Sprintf("⬜ Задача «%s» снова активна.", task.Title))
+			b.answerCallback(ctx, cb.ID, "Отметка снята")
+			b.replyPlain(ctx, chatID, fmt.Sprintf("⬜ Задача «%s» снова активна.", task.Title))
 		}
 		b.refreshTaskList(ctx, chatID, user)
 
@@ -1056,15 +1061,15 @@ func (b *Bot) handleTaskListCallback(ctx context.Context, cb *tgbotapi.CallbackQ
 		}
 		if err := b.tasks.Delete(ctx, user.ID, id); err != nil {
 			b.log.Error("delete task from list", "task_id", id, "error", err)
-			b.answerCallback(cb.ID, "Не удалось удалить.")
+			b.answerCallback(ctx, cb.ID, "Не удалось удалить.")
 			return
 		}
-		b.answerCallback(cb.ID, "Удалено 🗑")
-		b.replyPlain(chatID, fmt.Sprintf("🗑 Задача «%s» удалена.", title))
+		b.answerCallback(ctx, cb.ID, "Удалено 🗑")
+		b.replyPlain(ctx, chatID, fmt.Sprintf("🗑 Задача «%s» удалена.", title))
 		b.refreshTaskList(ctx, chatID, user)
 
 	default:
-		b.answerCallback(cb.ID, "")
+		b.answerCallback(ctx, cb.ID, "")
 	}
 }
 
@@ -1072,7 +1077,7 @@ func (b *Bot) handleTaskListCallback(ctx context.Context, cb *tgbotapi.CallbackQ
 func (b *Bot) handleTaskCardCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 	_, action, id, ok := parseCallback(cb.Data)
 	if !ok || id == uuid.Nil {
-		b.answerCallback(cb.ID, "")
+		b.answerCallback(ctx, cb.ID, "")
 		return
 	}
 	chatID := cb.Message.Chat.ID
@@ -1080,7 +1085,7 @@ func (b *Bot) handleTaskCardCallback(ctx context.Context, cb *tgbotapi.CallbackQ
 
 	user, err := b.users.GetByTelegramID(ctx, cb.From.ID)
 	if err != nil {
-		b.answerCallback(cb.ID, "Вы не авторизованы.")
+		b.answerCallback(ctx, cb.ID, "Вы не авторизованы.")
 		return
 	}
 
@@ -1088,17 +1093,17 @@ func (b *Bot) handleTaskCardCallback(ctx context.Context, cb *tgbotapi.CallbackQ
 	case "toggle":
 		task, err := b.tasks.Get(ctx, user.ID, id)
 		if err != nil {
-			b.answerCallback(cb.ID, "Задача не найдена.")
+			b.answerCallback(ctx, cb.ID, "Задача не найдена.")
 			return
 		}
 		done := !task.IsDone
 		updated, err := b.tasks.Update(ctx, user.ID, id, repository.TaskUpdate{IsDone: &done})
 		if err != nil {
 			b.log.Error("toggle task from card", "task_id", id, "error", err)
-			b.answerCallback(cb.ID, "Не удалось обновить статус.")
+			b.answerCallback(ctx, cb.ID, "Не удалось обновить статус.")
 			return
 		}
-		b.answerCallback(cb.ID, "Готово")
+		b.answerCallback(ctx, cb.ID, "Готово")
 		loc := user.Location()
 		markup := taskCardKeyboard(updated.ID, updated.IsDone)
 		// A card with an image is a photo/video message: it has a caption, not
@@ -1109,14 +1114,14 @@ func (b *Bot) handleTaskCardCallback(ctx context.Context, cb *tgbotapi.CallbackQ
 			edit := tgbotapi.NewEditMessageCaption(chatID, msgID, caption)
 			edit.ParseMode = tgbotapi.ModeMarkdown
 			edit.ReplyMarkup = &markup
-			if _, err := b.api.Send(edit); err != nil {
+			if _, err := b.send(ctx, edit); err != nil {
 				b.log.Debug("edit card caption", "error", err)
 			}
 		} else {
 			edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, renderTaskCardText(updated, loc, ""), markup)
 			edit.ParseMode = tgbotapi.ModeMarkdown
 			edit.DisableWebPagePreview = true
-			if _, err := b.api.Send(edit); err != nil {
+			if _, err := b.send(ctx, edit); err != nil {
 				b.log.Debug("edit card", "error", err)
 			}
 		}
@@ -1125,29 +1130,29 @@ func (b *Bot) handleTaskCardCallback(ctx context.Context, cb *tgbotapi.CallbackQ
 	case "del":
 		if err := b.tasks.Delete(ctx, user.ID, id); err != nil {
 			b.log.Error("delete task from card", "task_id", id, "error", err)
-			b.answerCallback(cb.ID, "Не удалось удалить.")
+			b.answerCallback(ctx, cb.ID, "Не удалось удалить.")
 			return
 		}
-		b.answerCallback(cb.ID, "Удалено 🗑")
+		b.answerCallback(ctx, cb.ID, "Удалено 🗑")
 		// The card may be a photo message (caption, not text), so drop it and
 		// post a plain confirmation instead of editing in place.
-		b.deleteMessage(chatID, msgID)
-		b.replyPlain(chatID, "🗑 Задача удалена.")
+		b.deleteMessage(ctx, chatID, msgID)
+		b.replyPlain(ctx, chatID, "🗑 Задача удалена.")
 		b.refreshTaskList(ctx, chatID, user)
 
 	case "back":
-		b.answerCallback(cb.ID, "")
-		b.deleteMessage(chatID, msgID)
+		b.answerCallback(ctx, cb.ID, "")
+		b.deleteMessage(ctx, chatID, msgID)
 		b.showBackToList(ctx, chatID, user)
 
 	default:
-		b.answerCallback(cb.ID, "")
+		b.answerCallback(ctx, cb.ID, "")
 	}
 }
 
-func (b *Bot) answerCallback(callbackID, text string) {
+func (b *Bot) answerCallback(ctx context.Context, callbackID, text string) {
 	callback := tgbotapi.NewCallback(callbackID, text)
-	if _, err := b.api.Request(callback); err != nil {
+	if _, err := b.request(ctx, callback); err != nil {
 		b.log.Error("answer callback", "error", err)
 	}
 }
@@ -1163,7 +1168,7 @@ func (b *Bot) answerCallback(callbackID, text string) {
 func (b *Bot) processNaturalLanguage(ctx context.Context, chatID, telegramID int64, text string) {
 	user, err := b.users.GetByTelegramID(ctx, telegramID)
 	if err != nil {
-		b.reply(chatID, "Сначала войдите через сайт NowDone, чтобы я знал, кому принадлежат задачи.")
+		b.reply(ctx, chatID, "Сначала войдите через сайт NowDone, чтобы я знал, кому принадлежат задачи.")
 		return
 	}
 
@@ -1178,7 +1183,7 @@ func (b *Bot) processNaturalLanguage(ctx context.Context, chatID, telegramID int
 	intent, err := b.openai.ParseIntent(ctx, text, nowRef)
 	if err != nil {
 		b.log.Error("parse intent", "error", err)
-		b.reply(chatID, "Не получилось понять запрос. Попробуйте переформулировать.")
+		b.reply(ctx, chatID, "Не получилось понять запрос. Попробуйте переформулировать.")
 		return
 	}
 
@@ -1192,7 +1197,7 @@ func (b *Bot) processNaturalLanguage(ctx context.Context, chatID, telegramID int
 	case "update_status", "delete", "reschedule":
 		b.handleMutateIntent(ctx, chatID, user, intent)
 	default:
-		b.reply(chatID, "Не понял, что нужно сделать. Уточните запрос.")
+		b.reply(ctx, chatID, "Не понял, что нужно сделать. Уточните запрос.")
 	}
 }
 
@@ -1207,11 +1212,11 @@ func (b *Bot) handleListIntent(ctx context.Context, chatID int64, user *models.U
 	tasks, err := b.tasks.ListRange(ctx, user.ID, date, date)
 	if err != nil {
 		b.log.Error("list tasks from bot", "error", err)
-		b.reply(chatID, "Не удалось загрузить задачи.")
+		b.reply(ctx, chatID, "Не удалось загрузить задачи.")
 		return
 	}
 	if len(tasks) == 0 {
-		b.reply(chatID, "На "+date.Format("02.01.2006")+" задач нет.")
+		b.reply(ctx, chatID, "На "+date.Format("02.01.2006")+" задач нет.")
 		return
 	}
 
@@ -1224,7 +1229,7 @@ func (b *Bot) handleListIntent(ctx context.Context, chatID int64, user *models.U
 		}
 		sb.WriteString(fmt.Sprintf("%s %s\n", status, t.Title))
 	}
-	b.reply(chatID, sb.String())
+	b.reply(ctx, chatID, sb.String())
 }
 
 func (b *Bot) handleMutateIntent(ctx context.Context, chatID int64, user *models.User, intent *service.Intent) {
@@ -1234,7 +1239,7 @@ func (b *Bot) handleMutateIntent(ctx context.Context, chatID int64, user *models
 	tasks, err := b.tasks.ListRange(ctx, user.ID, from, to)
 	if err != nil {
 		b.log.Error("list tasks for mutate", "error", err)
-		b.reply(chatID, "Не удалось найти задачу.")
+		b.reply(ctx, chatID, "Не удалось найти задачу.")
 		return
 	}
 
@@ -1246,7 +1251,7 @@ func (b *Bot) handleMutateIntent(ctx context.Context, chatID int64, user *models
 		}
 	}
 	if match == nil {
-		b.reply(chatID, "Не нашёл задачу с похожим названием.")
+		b.reply(ctx, chatID, "Не нашёл задачу с похожим названием.")
 		return
 	}
 
@@ -1255,33 +1260,33 @@ func (b *Bot) handleMutateIntent(ctx context.Context, chatID int64, user *models
 		done := intent.Status == "done"
 		if _, err := b.tasks.Update(ctx, user.ID, match.ID, repository.TaskUpdate{IsDone: &done}); err != nil {
 			b.log.Error("update task status from bot", "error", err)
-			b.reply(chatID, "Не удалось обновить статус задачи.")
+			b.reply(ctx, chatID, "Не удалось обновить статус задачи.")
 			return
 		}
-		b.reply(chatID, "Обновлено: *"+match.Title+"*")
+		b.reply(ctx, chatID, "Обновлено: *"+match.Title+"*")
 	case "delete":
 		if err := b.tasks.Delete(ctx, user.ID, match.ID); err != nil {
 			b.log.Error("delete task from bot", "error", err)
-			b.reply(chatID, "Не удалось удалить задачу.")
+			b.reply(ctx, chatID, "Не удалось удалить задачу.")
 			return
 		}
-		b.reply(chatID, "Удалено: *"+match.Title+"*")
+		b.reply(ctx, chatID, "Удалено: *"+match.Title+"*")
 	case "reschedule":
 		if intent.NewDate == "" {
-			b.reply(chatID, "Не указана новая дата.")
+			b.reply(ctx, chatID, "Не указана новая дата.")
 			return
 		}
 		newDate, err := time.Parse("2006-01-02", intent.NewDate)
 		if err != nil {
-			b.reply(chatID, "Некорректная новая дата.")
+			b.reply(ctx, chatID, "Некорректная новая дата.")
 			return
 		}
 		if _, err := b.tasks.Update(ctx, user.ID, match.ID, repository.TaskUpdate{Date: &newDate}); err != nil {
 			b.log.Error("reschedule task from bot", "error", err)
-			b.reply(chatID, "Не удалось перенести задачу.")
+			b.reply(ctx, chatID, "Не удалось перенести задачу.")
 			return
 		}
-		b.reply(chatID, "Перенесено на "+newDate.Format("02.01.2006")+": *"+match.Title+"*")
+		b.reply(ctx, chatID, "Перенесено на "+newDate.Format("02.01.2006")+": *"+match.Title+"*")
 	}
 	b.refreshTaskList(ctx, chatID, user)
 }

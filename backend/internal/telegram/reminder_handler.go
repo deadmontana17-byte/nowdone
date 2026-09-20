@@ -22,7 +22,7 @@ import (
 func (b *Bot) handleReminderCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 	_, action, taskID, ok := parseCallback(cb.Data)
 	if !ok {
-		b.answerCallback(cb.ID, "")
+		b.answerCallback(ctx, cb.ID, "")
 		return
 	}
 
@@ -31,14 +31,14 @@ func (b *Bot) handleReminderCallback(ctx context.Context, cb *tgbotapi.CallbackQ
 
 	user, err := b.users.GetByTelegramID(ctx, cb.From.ID)
 	if err != nil {
-		b.answerCallback(cb.ID, "Вы не авторизованы.")
+		b.answerCallback(ctx, cb.ID, "Вы не авторизованы.")
 		return
 	}
 
 	task, err := b.tasks.Get(ctx, user.ID, taskID)
 	if err != nil {
-		b.answerCallback(cb.ID, "Задача не найдена.")
-		b.deleteMessage(chatID, reminderMsgID) // drop the dangling reminder
+		b.answerCallback(ctx, cb.ID, "Задача не найдена.")
+		b.deleteMessage(ctx, chatID, reminderMsgID) // drop the dangling reminder
 		return
 	}
 
@@ -47,12 +47,12 @@ func (b *Bot) handleReminderCallback(ctx context.Context, cb *tgbotapi.CallbackQ
 		done := true
 		if _, err := b.tasks.Update(ctx, user.ID, taskID, repository.TaskUpdate{IsDone: &done}); err != nil {
 			b.log.Error("reminder: mark done", "task_id", taskID, "error", err)
-			b.answerCallback(cb.ID, "Не удалось отметить выполненной.")
+			b.answerCallback(ctx, cb.ID, "Не удалось отметить выполненной.")
 			return
 		}
-		b.answerCallback(cb.ID, "Готово ✅")
-		b.deleteMessage(chatID, reminderMsgID)
-		b.replyPlain(chatID, fmt.Sprintf("✅ Задача «%s» помечена как выполненная!", task.Title))
+		b.answerCallback(ctx, cb.ID, "Готово ✅")
+		b.deleteMessage(ctx, chatID, reminderMsgID)
+		b.replyPlain(ctx, chatID, fmt.Sprintf("✅ Задача «%s» помечена как выполненная!", task.Title))
 		b.refreshTaskList(ctx, chatID, user)
 
 	case "snooze":
@@ -61,15 +61,15 @@ func (b *Bot) handleReminderCallback(ctx context.Context, cb *tgbotapi.CallbackQ
 		next := time.Now().Add(time.Hour)
 		if _, err := b.tasks.Update(ctx, user.ID, taskID, repository.TaskUpdate{ReminderTime: &next}); err != nil {
 			b.log.Error("reminder: snooze", "task_id", taskID, "error", err)
-			b.answerCallback(cb.ID, "Не удалось отложить.")
+			b.answerCallback(ctx, cb.ID, "Не удалось отложить.")
 			return
 		}
-		b.answerCallback(cb.ID, "Отложено на час ⏰")
-		b.deleteMessage(chatID, reminderMsgID)
-		b.replyPlain(chatID, "⏰ Напоминание отложено на 1 час. Я напомню снова!")
+		b.answerCallback(ctx, cb.ID, "Отложено на час ⏰")
+		b.deleteMessage(ctx, chatID, reminderMsgID)
+		b.replyPlain(ctx, chatID, "⏰ Напоминание отложено на 1 час. Я напомню снова!")
 
 	default:
-		b.answerCallback(cb.ID, "")
+		b.answerCallback(ctx, cb.ID, "")
 	}
 }
 
@@ -79,7 +79,7 @@ func (b *Bot) handleReminderCallback(ctx context.Context, cb *tgbotapi.CallbackQ
 func (b *Bot) handleLegacyReminderCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
 	parts := strings.SplitN(cb.Data, ":", 2)
 	if len(parts) != 2 {
-		b.answerCallback(cb.ID, "")
+		b.answerCallback(ctx, cb.ID, "")
 		return
 	}
 	cb.Data = "remind:" + parts[0] + ":" + parts[1]

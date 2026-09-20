@@ -32,10 +32,15 @@ export function CharacterDialog({ open, onClose, index, currentStreak }: Charact
   const isMaxed = safeIndex === MAX_INDEX;
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <IconButton onClick={onClose} aria-label="Закрыть" sx={{ position: 'absolute', right: 8, top: 8 }}>
-        <CloseIcon />
-      </IconButton>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth="xs"
+      // Paper must be positioned so the absolute close button anchors to the
+      // dialog itself (not the fixed viewport container).
+      PaperProps={{ sx: { position: 'relative' } }}
+    >
       <DialogContent sx={{ pt: 4 }}>
         <Stack spacing={3} alignItems="center">
           <Typography variant="h6" sx={{ fontWeight: 700 }}>
@@ -76,6 +81,17 @@ export function CharacterDialog({ open, onClose, index, currentStreak }: Charact
           </Typography>
         </Stack>
       </DialogContent>
+
+      {/* Rendered after DialogContent and raised with zIndex: previously the
+          content's top padding overlapped this button (it comes later in the
+          DOM) and swallowed the click, so the cross did nothing. */}
+      <IconButton
+        onClick={onClose}
+        aria-label="Закрыть"
+        sx={{ position: 'absolute', right: 8, top: 8, zIndex: 1 }}
+      >
+        <CloseIcon />
+      </IconButton>
     </Dialog>
   );
 }

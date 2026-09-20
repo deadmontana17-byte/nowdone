@@ -91,15 +91,17 @@ export function HomePage() {
           </Typography>
           <IconButton onClick={() => shiftMonth(1)}><ChevronRightIcon /></IconButton>
         </Stack>
-        {/* Purple icon + a white "Типы" label so it's clearly a control that
-            opens task-type management. Label weight matches the task titles
-            (regular, 400), overriding the theme's bold (600) buttons. */}
+        {/* Purple icon + a "Типы" label so it's clearly a control that opens
+            task-type management. The label uses the theme's primary text colour
+            so it stays readable in both light and dark themes. Label weight
+            matches the task titles (regular, 400), overriding the theme's bold
+            (600) buttons. */}
         <Button
           onClick={() => setTypesOpen(true)}
           startIcon={<CategoryIcon sx={{ color: 'primary.main', fontSize: '1.6rem' }} />}
           size="small"
           aria-label="Управление типами задач"
-          sx={{ color: 'common.white', fontSize: '1rem', fontWeight: 400 }}
+          sx={{ color: 'text.primary', fontSize: '1rem', fontWeight: 400 }}
         >
           Типы
         </Button>

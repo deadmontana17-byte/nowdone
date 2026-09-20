@@ -27,7 +27,7 @@ const (
 )
 
 // sendDonateMenu shows the star-amount picker.
-func (b *Bot) sendDonateMenu(chatID int64) {
+func (b *Bot) sendDonateMenu(ctx context.Context, chatID int64) {
 	text := "🌟 Поддержите разработку бота!\n\n" +
 		"Выберите количество звёзд ⭐, которые вы хотите отправить:"
 
@@ -47,7 +47,7 @@ func (b *Bot) sendDonateMenu(chatID int64) {
 
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
-	if _, err := b.api.Send(msg); err != nil {
+	if _, err := b.send(ctx, msg); err != nil {
 		b.log.Error("send donate menu", "error", err)
 	}
 }
@@ -55,18 +55,17 @@ func (b *Bot) sendDonateMenu(chatID int64) {
 // handleDonateCallback fires when the user taps a star amount; it sends a
 // Telegram Stars invoice (currency "XTR", empty provider token).
 func (b *Bot) handleDonateCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) {
-	_ = ctx
 	parts := strings.Split(cb.Data, ":")
 	if len(parts) != 3 || parts[1] != "stars" {
-		b.answerCallback(cb.ID, "")
+		b.answerCallback(ctx, cb.ID, "")
 		return
 	}
 	stars, err := strconv.Atoi(parts[2])
 	if err != nil || stars <= 0 {
-		b.answerCallback(cb.ID, "Некорректная сумма.")
+		b.answerCallback(ctx, cb.ID, "Некорректная сумма.")
 		return
 	}
-	b.answerCallback(cb.ID, "")
+	b.answerCallback(ctx, cb.ID, "")
 
 	invoice := tgbotapi.NewInvoice(
 		cb.Message.Chat.ID,
@@ -78,9 +77,9 @@ func (b *Bot) handleDonateCallback(ctx context.Context, cb *tgbotapi.CallbackQue
 		starsCurrency,
 		[]tgbotapi.LabeledPrice{{Label: fmt.Sprintf("%d ⭐", stars), Amount: stars}},
 	)
-	if _, err := b.api.Send(invoice); err != nil {
+	if _, err := b.send(ctx, invoice); err != nil {
 		b.log.Error("send stars invoice", "stars", stars, "error", err)
-		b.reply(cb.Message.Chat.ID, "Не удалось создать счёт на оплату. Попробуйте позже.")
+		b.reply(ctx, cb.Message.Chat.ID, "Не удалось создать счёт на оплату. Попробуйте позже.")
 	}
 }
 
@@ -93,6 +92,9 @@ func (b *Bot) handlePreCheckout(ctx context.Context, q *tgbotapi.PreCheckoutQuer
 	if !ok {
 		cfg.ErrorMessage = "Счёт устарел. Откройте меню поддержки заново."
 	}
+	// Answered directly, without the retrying b.request wrapper: Telegram voids
+	// the payment after ~10s, and retry backoff would blow that budget. The
+	// injected http.Client still bounds a stalled call.
 	if _, err := b.api.Request(cfg); err != nil {
 		b.log.Error("answer pre-checkout", "error", err)
 	}
@@ -100,7 +102,6 @@ func (b *Bot) handlePreCheckout(ctx context.Context, q *tgbotapi.PreCheckoutQuer
 
 // handlePaymentSuccess posts the thank-you message once Stars are received.
 func (b *Bot) handlePaymentSuccess(ctx context.Context, msg *tgbotapi.Message) {
-	_ = ctx
 	sp := msg.SuccessfulPayment
 	b.log.Info("stars payment received",
 		"chat_id", msg.Chat.ID,
@@ -109,7 +110,7 @@ func (b *Bot) handlePaymentSuccess(ctx context.Context, msg *tgbotapi.Message) {
 		"payload", sp.InvoicePayload,
 	)
 
-	b.reply(msg.Chat.ID, "❤️ Огромное спасибо за вашу поддержку!\n\n"+
+	b.reply(ctx, msg.Chat.ID, "❤️ Огромное спасибо за вашу поддержку!\n\n"+
 		"Ваши звёзды помогают мне продолжать развивать этот проект, добавлять новые функции "+
 		"и делать бота ещё удобнее и полезнее. Каждый ваш вклад — это большая мотивация для меня!\n\n"+
 		"Спасибо, что вы со мной! 🚀")

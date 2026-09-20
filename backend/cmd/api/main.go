@@ -60,13 +60,13 @@ func main() {
 
 	// Lightweight Bot API client so the API can push PIN-reset codes straight to
 	// a user's Telegram chat (no bot /start, no deep link).
-	botAPI, err := telegram.NewBotAPI(cfg.TelegramToken, cfg.TelegramAPIURL)
+	botAPI, err := telegram.NewBotAPI(cfg.TelegramToken, cfg.TelegramAPIURL, telegram.NewHTTPClient())
 	if err != nil {
 		log.Error("init telegram bot api", "error", err)
 		os.Exit(1)
 	}
 
-	authSvc := service.NewAuthService(userRepo, authCodeRepo, cfg, service.NewTelegramCodeSender(botAPI))
+	authSvc := service.NewAuthService(userRepo, authCodeRepo, cfg, service.NewTelegramCodeSender(botAPI, log))
 	taskSvc := service.NewTaskService(taskRepo, s3Svc, log)
 	taskTypeSvc := service.NewTaskTypeService(taskTypeRepo)
 	noteSvc := service.NewNoteService(noteRepo, s3Svc, log)

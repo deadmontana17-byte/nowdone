@@ -1,5 +1,6 @@
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { AppBar, Toolbar, Typography, BottomNavigation, BottomNavigationAction, Box, Paper } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import ChecklistIcon from '@mui/icons-material/Checklist';
 import StickyNote2Icon from '@mui/icons-material/StickyNote2';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -15,7 +16,19 @@ export function AppLayout() {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', pb: 8 }}>
-      <AppBar position="sticky" elevation={0} color="transparent" sx={{ backdropFilter: 'blur(12px)' }}>
+      {/* backgroundColor is resolved from the current theme (sx callback re-runs
+          on theme switch), so the header follows light/dark instead of staying
+          fully transparent and showing the previous theme's colour. */}
+      <AppBar
+        position="sticky"
+        elevation={0}
+        color="transparent"
+        sx={{
+          backdropFilter: 'blur(12px)',
+          backgroundColor: (theme) => alpha(theme.palette.background.default, 0.8),
+          borderBottom: (theme) => `1px solid ${theme.palette.divider}`,
+        }}
+      >
         <Toolbar>
           <Typography variant="h6" sx={{ fontWeight: 700, flexGrow: 1 }}>
             NowDone

@@ -56,10 +56,22 @@ export function TaskTypeDialog({ open, onClose }: TaskTypeDialogProps) {
           anchorEl={pickerAnchor}
           onClose={() => setPickerAnchor(null)}
           anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+          // Keep a gap from the screen edges; Popover then flips/repositions so
+          // the panel never spills off-screen.
+          marginThreshold={8}
+          // Cap the panel to the viewport and let it scroll when emoji overflow.
+          PaperProps={{
+            sx: { maxWidth: '90vw', maxHeight: '50vh', overflow: 'auto' },
+          }}
         >
+          {/* dynamicWidth makes Emoji Mart fill the (capped) Popover width
+              instead of its fixed ~350px, so it fits mobile screens. */}
           <Picker
             data={data}
             theme={muiTheme.palette.mode}
+            dynamicWidth
+            perLine={8}
             onEmojiSelect={(e: { native: string }) => {
               setEmoji(e.native);
               setPickerAnchor(null);

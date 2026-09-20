@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -56,7 +57,7 @@ func draftKeyboard() tgbotapi.ReplyKeyboardMarkup {
 
 // registerCommands publishes the "/" command menu. Command names must be
 // lowercase latin, so the Russian captions live in the descriptions.
-func (b *Bot) registerCommands() {
+func (b *Bot) registerCommands(ctx context.Context) {
 	cmds := tgbotapi.NewSetMyCommands(
 		tgbotapi.BotCommand{Command: "today", Description: "Задачи на сегодня"},
 		tgbotapi.BotCommand{Command: "tomorrow", Description: "Задачи на завтра"},
@@ -64,7 +65,7 @@ func (b *Bot) registerCommands() {
 		tgbotapi.BotCommand{Command: "add_note", Description: "Добавить заметку"},
 		tgbotapi.BotCommand{Command: "donate", Description: "⭐ Поддержать автора"},
 	)
-	if _, err := b.api.Request(cmds); err != nil {
+	if _, err := b.request(ctx, cmds); err != nil {
 		b.log.Error("set my commands", "error", err)
 	}
 }

@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"net/http"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -14,14 +15,23 @@ const DefaultAPIURL = "https://api.telegram.org"
 // DefaultAPIURL; pass a proxy origin (for example a Cloudflare Worker URL) to
 // route every Bot API call through it on networks where api.telegram.org is
 // blocked. An empty or default value keeps the library's standard behaviour.
-func NewBotAPI(token, apiBaseURL string) (*tgbotapi.BotAPI, error) {
-	base := normalizeAPIBase(apiBaseURL)
-	if base == DefaultAPIURL {
-		return tgbotapi.NewBotAPI(token)
+//
+// httpClient is the pooled, timeout-bounded client from NewHTTPClient. It is
+// injected (rather than letting tgbotapi create a bare &http.Client{}) so Bot
+// API calls can no longer block indefinitely on a stalled connection. Passing
+// nil falls back to a fresh NewHTTPClient.
+func NewBotAPI(token, apiBaseURL string, httpClient *http.Client) (*tgbotapi.BotAPI, error) {
+	if httpClient == nil {
+		httpClient = NewHTTPClient()
 	}
-	// v5 formats requests as fmt.Sprintf(endpoint, token, method), so the proxy
+
+	// v5 formats requests as fmt.Sprintf(endpoint, token, method), so the
 	// endpoint must keep the "/bot%s/%s" shape.
-	return tgbotapi.NewBotAPIWithAPIEndpoint(token, base+"/bot%s/%s")
+	endpoint := tgbotapi.APIEndpoint
+	if base := normalizeAPIBase(apiBaseURL); base != DefaultAPIURL {
+		endpoint = base + "/bot%s/%s"
+	}
+	return tgbotapi.NewBotAPIWithClient(token, endpoint, httpClient)
 }
 
 // proxyFileURL rewrites a file download URL returned by GetFileDirectURL so it

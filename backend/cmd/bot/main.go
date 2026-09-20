@@ -33,7 +33,12 @@ func main() {
 	}
 	defer pool.Close()
 
-	api, err := telegram.NewBotAPI(cfg.TelegramToken, cfg.TelegramAPIURL)
+	// One pooled, timeout-bounded HTTP client shared by the Bot API transport
+	// and the bot's file downloads, so a stalled connection can no longer hang
+	// the bot indefinitely.
+	tgClient := telegram.NewHTTPClient()
+
+	api, err := telegram.NewBotAPI(cfg.TelegramToken, cfg.TelegramAPIURL, tgClient)
 	if err != nil {
 		log.Error("init telegram bot api", "error", err)
 		os.Exit(1)
@@ -65,9 +70,9 @@ func main() {
 	taskSvc := service.NewTaskService(taskRepo, s3Svc, log)
 	taskTypeSvc := service.NewTaskTypeService(taskTypeRepo)
 	noteSvc := service.NewNoteService(noteRepo, s3Svc, log)
-	openaiSvc := service.NewOpenAIService(cfg.OpenAIAPIKey)
+	openaiSvc := service.NewOpenAIService(cfg.OpenAIAPIKey, log)
 
-	bot := telegram.New(api, cfg.TelegramAPIURL, authSvc, taskSvc, taskTypeSvc, noteSvc, userRepo, openaiSvc, s3Svc, log)
+	bot := telegram.New(api, cfg.TelegramAPIURL, tgClient, authSvc, taskSvc, taskTypeSvc, noteSvc, userRepo, openaiSvc, s3Svc, log)
 
 	log.Info("starting telegram bot")
 	if err := bot.Run(ctx); err != nil && err != context.Canceled {
