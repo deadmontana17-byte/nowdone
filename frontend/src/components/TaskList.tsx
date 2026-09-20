@@ -51,7 +51,16 @@ export function TaskList({ tasks, taskTypes, onOpenDetail }: TaskListProps) {
   return (
     <Box>
       {dates.map((date) => (
-        <Box key={date} sx={{ mb: 3 }}>
+        <Box
+          key={date}
+          id={`day-${date}`}
+          sx={{
+            mb: 3,
+            // Room for the sticky app header + the sticky month bar so a
+            // scrollIntoView target lands below both instead of under them.
+            scrollMarginTop: 'calc(var(--app-bar-height, 64px) + 64px)',
+          }}
+        >
           <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1, textTransform: 'capitalize' }}>
             {formatDateHeading(date)}
           </Typography>

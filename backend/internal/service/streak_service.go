@@ -20,6 +20,13 @@ var MoscowLocation = time.FixedZone("MSK", 3*60*60)
 // day-by-day scan into a very long loop.
 const maxStreakLookbackDays = 2000
 
+// minLevel/maxLevel bound the character level: 10 named characters (see
+// StatusIndex), level 1 ("Зелёный") through level 10 ("Бог планирования").
+const (
+	minLevel = 1
+	maxLevel = 10
+)
+
 // streakUserStore is the slice of UserRepository the streak worker needs. Keeping
 // it an interface lets the calculation be unit-tested with fakes.
 type streakUserStore interface {
@@ -32,10 +39,16 @@ type streakTaskStore interface {
 	ListByUserAndRange(ctx context.Context, userID uuid.UUID, from, to time.Time) ([]*models.Task, error)
 }
 
-// StreakService recalculates every user's current/max streak. It is driven by
+// StreakService recalculates every user's character level. It is driven by
 // the cron worker once per hour (per the backend rules). The calculation is a
 // full recompute from scratch, so re-running it any number of times a day
 // converges on the same value.
+//
+// The level (stored in the `current_streak` column, kept for schema
+// compatibility) moves +1 for each past day where every task was completed
+// and -1 for each past day with tasks left undone; a day with no tasks at all
+// is neutral. `max_streak` stores the highest level ever reached — the
+// player's record — and never decreases.
 type StreakService struct {
 	users streakUserStore
 	tasks streakTaskStore
@@ -57,9 +70,9 @@ func (s *StreakService) RecalculateAll(ctx context.Context) error {
 	}
 
 	for _, user := range users {
-		current, err := s.currentStreak(ctx, user)
+		current, err := s.currentLevel(ctx, user)
 		if err != nil {
-			s.log.Error("compute streak", "user_id", user.ID, "error", err)
+			s.log.Error("compute level", "user_id", user.ID, "error", err)
 			continue
 		}
 
@@ -76,30 +89,32 @@ func (s *StreakService) RecalculateAll(ctx context.Context) error {
 			s.log.Error("update streak", "user_id", user.ID, "error", err)
 			continue
 		}
-		s.log.Info("streak updated",
+		s.log.Info("level updated",
 			"user_id", user.ID,
-			"current_streak", current,
-			"max_streak", newMax,
-			"previous_current", user.CurrentStreak,
+			"level", current,
+			"max_level", newMax,
+			"previous_level", user.CurrentStreak,
 		)
 	}
 
 	return nil
 }
 
-// currentStreak counts consecutive days, ending today (in the user's timezone),
-// on which the user completed every task planned for that day:
+// currentLevel walks every day from the user's created_at date (in their own
+// timezone) up to today and turns it into a character level:
 //
-//   - A day whose tasks are all done adds 1 to the streak.
-//   - The first past day with an unfinished task ends the streak.
-//   - The first past day with no tasks at all also ends it — an inactive day
-//     breaks the chain.
-//   - Today is only counted once all of today's tasks are done, but a still
-//     unfinished or empty today does not reset the streak: the day is not over,
-//     so the scan just continues with yesterday.
+//   - A past day whose tasks are all done adds 1 to the level.
+//   - A past day with at least one unfinished task subtracts 1.
+//   - A past day with no tasks at all is neutral — nothing to miss.
+//   - Today only ever adds (once all of today's tasks are done); an unfinished
+//     or empty today never subtracts, since the day is not over yet.
+//
+// The level is clamped to [minLevel, maxLevel] at every step, so a long bad
+// streak bottoms out at level 1 instead of going negative, and one good day
+// is always enough to move up from the floor.
 //
 // The scan is bounded by the user's created_at date and by maxStreakLookbackDays.
-func (s *StreakService) currentStreak(ctx context.Context, user *models.User) (int, error) {
+func (s *StreakService) currentLevel(ctx context.Context, user *models.User) (int, error) {
 	loc := user.Location()
 	now := time.Now().In(loc)
 
@@ -130,31 +145,28 @@ func (s *StreakService) currentStreak(ctx context.Context, user *models.User) (i
 		byDay[key] = append(byDay[key], t)
 	}
 
-	streak := 0
-	for day := today; !day.Before(floor); day = day.AddDate(0, 0, -1) {
+	level := minLevel
+	for day := floor; !day.After(today); day = day.AddDate(0, 0, 1) {
 		dayTasks := byDay[day.Format("2006-01-02")]
 		isToday := day.Equal(today)
 
-		if len(dayTasks) == 0 {
-			if isToday {
-				continue // today may simply have no tasks yet — keep scanning
-			}
-			break // an inactive past day breaks the streak
+		switch {
+		case len(dayTasks) > 0 && allDone(dayTasks):
+			level++
+		case !isToday && len(dayTasks) > 0:
+			level-- // unfinished past day: missed
 		}
+		// !isToday && len(dayTasks) == 0: neutral, nothing to miss.
+		// isToday: an unfinished or empty today never subtracts.
 
-		if allDone(dayTasks) {
-			streak++
-			continue
+		if level < minLevel {
+			level = minLevel
+		} else if level > maxLevel {
+			level = maxLevel
 		}
-
-		// The day has an unfinished task.
-		if isToday {
-			continue // today is not over yet — keep counting earlier days
-		}
-		break
 	}
 
-	return streak, nil
+	return level, nil
 }
 
 func allDone(tasks []*models.Task) bool {
@@ -166,27 +178,17 @@ func allDone(tasks []*models.Task) bool {
 	return true
 }
 
-// StatusIndex maps a current streak to the character/progress category index
-// (0..8) described in the spec: 1 day, 1-9, 10-19, ..., 60-100, 100+.
-func StatusIndex(currentStreak int) int {
+// StatusIndex maps a character level (1..10) to its character image/name
+// index (0..9) — level 1 is index 0 ("Зелёный") through level 10 is index 9
+// ("Бог планирования"). Clamped so an out-of-range value never panics on a
+// slice/asset lookup.
+func StatusIndex(level int) int {
 	switch {
-	case currentStreak <= 1:
+	case level <= minLevel:
 		return 0
-	case currentStreak < 10:
-		return 1
-	case currentStreak < 20:
-		return 2
-	case currentStreak < 30:
-		return 3
-	case currentStreak < 40:
-		return 4
-	case currentStreak < 50:
-		return 5
-	case currentStreak < 60:
-		return 6
-	case currentStreak <= 100:
-		return 7
+	case level >= maxLevel:
+		return maxLevel - 1
 	default:
-		return 8
+		return level - 1
 	}
 }

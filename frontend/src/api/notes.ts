@@ -1,5 +1,5 @@
 import { apiRequest } from './client';
-import type { Note } from '@/types';
+import type { Note, TaskDescription } from '@/types';
 
 export function fetchNotes(unlocked: boolean) {
   return apiRequest<{ notes: Note[] }>(`/notes?unlocked=${unlocked}`);
@@ -7,7 +7,9 @@ export function fetchNotes(unlocked: boolean) {
 
 export interface NoteInput {
   title: string;
-  content?: Record<string, unknown>;
+  // Structured { blocks } content (paragraph/checklist, same shape as task
+  // descriptions) or a plain object for anything else.
+  content?: TaskDescription | Record<string, unknown>;
   attachments?: Note['attachments'];
   is_hidden?: boolean;
 }

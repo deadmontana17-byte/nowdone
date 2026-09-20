@@ -67,6 +67,9 @@ services:
       BOT_USERNAME: ${BOT_USERNAME}
       SITE_URL: ${SITE_URL}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # Optional: reverse-proxy origin for the OpenAI API, for hosting regions
+      # OpenAI rejects directly. Empty => https://api.openai.com.
+      OPENAI_API_PROXY_URL: ${OPENAI_API_PROXY_URL}
       # The bot uploads photo/video/file attachments sent in chat to S3.
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}

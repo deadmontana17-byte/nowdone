@@ -14,6 +14,7 @@ import { useNotes, useDeleteNote } from '@/hooks/useNotes';
 import { useUiStore } from '@/store/uiStore';
 import { useNotesStore } from '@/store/notesStore';
 import { verifyPin } from '@/api/auth';
+import { normalizeDescription, descriptionParagraphText, descriptionChecklistItems } from '@/utils/description';
 import type { Note } from '@/types';
 
 /** One-line title with an ellipsis; long unbroken words still wrap. */
@@ -33,10 +34,19 @@ const snippetSx = {
   wordBreak: 'break-word',
 } as const;
 
-/** Short preview of a note's body for the list row. */
+/** Short preview of a note's body for the list row: paragraph text if any,
+ * else a checklist progress summary ("Чек-лист: 2/5"). */
 function noteSnippet(content: Record<string, unknown> | undefined): string {
-  const text = (content as { text?: string } | undefined)?.text ?? '';
-  return text.replace(/\s+/g, ' ').trim();
+  const desc = normalizeDescription(content);
+  const text = descriptionParagraphText(desc).replace(/\s+/g, ' ').trim();
+  if (text) return text;
+
+  const items = descriptionChecklistItems(desc);
+  if (items.length > 0) {
+    const done = items.filter((i) => i.done).length;
+    return `☑️ Чек-лист: ${done}/${items.length}`;
+  }
+  return '';
 }
 
 /**

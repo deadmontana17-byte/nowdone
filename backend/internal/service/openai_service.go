@@ -8,15 +8,15 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"nowdone/pkg/retry"
 )
 
-const (
-	chatCompletionsURL = "https://api.openai.com/v1/chat/completions"
-	transcriptionsURL  = "https://api.openai.com/v1/audio/transcriptions"
-)
+// DefaultOpenAIAPIURL is OpenAI's standard API origin, used whenever no proxy
+// base URL is configured.
+const DefaultOpenAIAPIURL = "https://api.openai.com"
 
 // Per-call retry policies. Both endpoints are effectively idempotent for our
 // use (we send the same prompt / audio and read the answer), so a transient
@@ -61,22 +61,31 @@ If a field is not applicable, use an empty string.`
 
 // OpenAIService calls gpt-4o-mini to turn a transcribed message into an Intent.
 type OpenAIService struct {
-	apiKey string
-	http   *http.Client
-	log    *slog.Logger
+	apiKey  string
+	baseURL string
+	http    *http.Client
+	log     *slog.Logger
 }
 
-// NewOpenAIService builds the service. A nil logger falls back to
-// slog.Default(). The http.Client keeps a generous backstop timeout; the real
-// per-attempt bound comes from the retry policy's AttemptTimeout.
-func NewOpenAIService(apiKey string, log *slog.Logger) *OpenAIService {
+// NewOpenAIService builds the service. apiBaseURL is normally
+// DefaultOpenAIAPIURL; pass a proxy origin to route every OpenAI call through
+// it on networks where api.openai.com rejects requests (an empty value falls
+// back to the default). A nil logger falls back to slog.Default(). The
+// http.Client keeps a generous backstop timeout; the real per-attempt bound
+// comes from the retry policy's AttemptTimeout.
+func NewOpenAIService(apiKey, apiBaseURL string, log *slog.Logger) *OpenAIService {
 	if log == nil {
 		log = slog.Default()
 	}
+	base := strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
+	if base == "" {
+		base = DefaultOpenAIAPIURL
+	}
 	return &OpenAIService{
-		apiKey: apiKey,
-		http:   &http.Client{Timeout: 60 * time.Second},
-		log:    log,
+		apiKey:  apiKey,
+		baseURL: base,
+		http:    &http.Client{Timeout: 60 * time.Second},
+		log:     log,
 	}
 }
 
@@ -124,7 +133,7 @@ func (s *OpenAIService) ParseIntent(ctx context.Context, userMessage string, now
 	}
 
 	respBody, err := retry.DoValue(ctx, intentRetry, func(ctx context.Context) ([]byte, error) {
-		return s.postJSON(ctx, chatCompletionsURL, body)
+		return s.postJSON(ctx, s.baseURL+"/v1/chat/completions", body)
 	})
 	s.logCall("parse_intent", start, err)
 	if err != nil {
@@ -164,7 +173,7 @@ func (s *OpenAIService) TranscribeVoice(ctx context.Context, audioBytes []byte, 
 	contentType := "multipart/form-data; boundary=" + boundary
 
 	respBody, err := retry.DoValue(ctx, transcribeRetry, func(ctx context.Context) ([]byte, error) {
-		return s.post(ctx, transcriptionsURL, contentType, multipartBody)
+		return s.post(ctx, s.baseURL+"/v1/audio/transcriptions", contentType, multipartBody)
 	})
 	s.logCall("transcribe_voice", start, err)
 	if err != nil {

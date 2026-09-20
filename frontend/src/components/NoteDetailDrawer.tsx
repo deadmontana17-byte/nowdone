@@ -4,20 +4,19 @@ import CloseIcon from '@mui/icons-material/Close';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 
 import type { Note } from '@/types';
+import { useUpdateNote } from '@/hooks/useNotes';
+import {
+  normalizeDescription, descriptionParagraphText, descriptionChecklistItems, toggleChecklistItem,
+} from '@/utils/description';
 import { RichText } from '@/utils/richText';
 import { FileLink } from '@/utils/fileIcons';
+import { ChecklistView } from '@/components/ChecklistView';
 import { ImageLightbox } from '@/components/ImageLightbox';
 
 interface NoteDetailDrawerProps {
   note: Note | null;
   onClose: () => void;
   onEdit: (note: Note) => void;
-}
-
-/** Pull the plain-text body out of the note's JSONB `content`. Legacy notes and
- * new ones both store `{ text: string }`. */
-function contentToText(content: Record<string, unknown> | undefined): string {
-  return (content as { text?: string } | undefined)?.text ?? '';
 }
 
 /**
@@ -36,11 +35,20 @@ function contentToText(content: Record<string, unknown> | undefined): string {
  *    unlocked note in the list opens this read-only card, not the editor.
  */
 export function NoteDetailDrawer({ note, onClose, onEdit }: NoteDetailDrawerProps) {
+  const updateNote = useUpdateNote();
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
 
-  const text = note ? contentToText(note.content) : '';
+  // Read content live from the note so checklist toggles reflect instantly.
+  const desc = note ? normalizeDescription(note.content) : { blocks: [] };
+  const text = descriptionParagraphText(desc);
+  const checklist = descriptionChecklistItems(desc);
   const attachments = note?.attachments ?? [];
   const hasText = text.trim() !== '';
+
+  function handleToggleChecklist(id: string, done: boolean) {
+    if (!note) return;
+    updateNote.mutate({ id: note.id, input: { title: note.title, content: toggleChecklistItem(desc, id, done) } });
+  }
 
   return (
     <>
@@ -73,6 +81,13 @@ export function NoteDetailDrawer({ note, onClose, onEdit }: NoteDetailDrawerProp
                   </Box>
                 )}
 
+                {checklist.length > 0 && (
+                  <>
+                    <Divider />
+                    <ChecklistView items={checklist} onToggle={handleToggleChecklist} />
+                  </>
+                )}
+
                 {attachments.length > 0 && (
                   <>
                     <Divider />
@@ -101,7 +116,7 @@ export function NoteDetailDrawer({ note, onClose, onEdit }: NoteDetailDrawerProp
                   </>
                 )}
 
-                {!hasText && attachments.length === 0 && (
+                {!hasText && checklist.length === 0 && attachments.length === 0 && (
                   <Typography variant="body2" color="text.secondary">Пустая заметка</Typography>
                 )}
               </Stack>

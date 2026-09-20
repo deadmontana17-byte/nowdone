@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, Button, MenuItem,
-  FormControlLabel, Switch, Stack, Box, Typography,
+  FormControlLabel, Switch, Stack, Box, Typography, InputAdornment, IconButton,
 } from '@mui/material';
+import ClearIcon from '@mui/icons-material/Clear';
 
 import type { Attachment, ChecklistItem, RecurrenceRule, Task, TaskType } from '@/types';
 import { AttachmentUploader } from '@/components/AttachmentUploader';
@@ -148,11 +149,22 @@ export function TaskFormDialog({ open, onClose, task, defaultDate, taskTypes }: 
   }
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      fullWidth
+      maxWidth="sm"
+      // Autofocusing a field while the dialog is still animating in (and the
+      // mobile keyboard is opening) raced the outlined TextField's border-notch
+      // measurement against the transition, leaving the label crossed out by
+      // the outline. Recomputing once the transition actually settles fixes it
+      // for every field, not just an autofocused one.
+      TransitionProps={{ onEntered: () => window.dispatchEvent(new Event('resize')) }}
+    >
       <DialogTitle>{task ? 'Редактировать задачу' : 'Новая задача'}</DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} sx={{ mt: 1 }}>
-          <TextField label="Название" value={title} onChange={(e) => setTitle(e.target.value)} fullWidth autoFocus />
+          <TextField label="Название" value={title} onChange={(e) => setTitle(e.target.value)} fullWidth />
 
           {/* No placeholder — just the "Описание" label; the field opens empty. */}
           <TextField
@@ -196,6 +208,20 @@ export function TaskFormDialog({ open, onClose, task, defaultDate, taskTypes }: 
             onChange={(e) => setReminderTime(e.target.value)}
             InputLabelProps={{ shrink: true }}
             fullWidth
+            InputProps={{
+              endAdornment: reminderTime ? (
+                <InputAdornment position="end">
+                  <IconButton
+                    size="small"
+                    edge="end"
+                    aria-label="Удалить напоминание"
+                    onClick={() => setReminderTime('')}
+                  >
+                    <ClearIcon fontSize="small" />
+                  </IconButton>
+                </InputAdornment>
+              ) : undefined,
+            }}
           />
 
           <FormControlLabel

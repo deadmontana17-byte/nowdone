@@ -70,7 +70,7 @@ func main() {
 	taskSvc := service.NewTaskService(taskRepo, s3Svc, log)
 	taskTypeSvc := service.NewTaskTypeService(taskTypeRepo)
 	noteSvc := service.NewNoteService(noteRepo, s3Svc, log)
-	openaiSvc := service.NewOpenAIService(cfg.OpenAIAPIKey, log)
+	openaiSvc := service.NewOpenAIService(cfg.OpenAIAPIKey, cfg.OpenAIAPIURL, log)
 
 	bot := telegram.New(api, cfg.TelegramAPIURL, tgClient, authSvc, taskSvc, taskTypeSvc, noteSvc, userRepo, openaiSvc, s3Svc, log)
 

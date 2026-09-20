@@ -1,21 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { Dialog, DialogTitle, DialogContent, DialogActions, TextField, Button, Stack, FormControlLabel, Switch, Box, Typography } from '@mui/material';
 
-import type { Attachment, Note } from '@/types';
+import type { Attachment, ChecklistItem, Note } from '@/types';
 import { AttachmentUploader } from '@/components/AttachmentUploader';
+import { ChecklistEditor } from '@/components/ChecklistEditor';
 import { useCreateNote, useUpdateNote } from '@/hooks/useNotes';
 import { apiDeleteUploads } from '@/api/client';
 import { attachmentKeyFromUrl } from '@/utils/attachments';
+import {
+  normalizeDescription, descriptionParagraphText, descriptionChecklistItems, buildDescription,
+} from '@/utils/description';
 
 interface NoteDialogProps {
   open: boolean;
   onClose: () => void;
   note: Note | null;
-}
-
-function contentToText(content: Record<string, unknown> | undefined): string {
-  if (!content) return '';
-  return (content as { text?: string }).text ?? '';
 }
 
 export function NoteDialog({ open, onClose, note }: NoteDialogProps) {
@@ -24,6 +23,7 @@ export function NoteDialog({ open, onClose, note }: NoteDialogProps) {
 
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
+  const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [isHidden, setIsHidden] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
 
@@ -36,13 +36,16 @@ export function NoteDialog({ open, onClose, note }: NoteDialogProps) {
   useEffect(() => {
     sessionUploadKeys.current.clear();
     if (note) {
+      const desc = normalizeDescription(note.content);
       setTitle(note.title);
-      setContent(contentToText(note.content));
+      setContent(descriptionParagraphText(desc));
+      setChecklist(descriptionChecklistItems(desc));
       setIsHidden(note.is_hidden);
       setAttachments(note.attachments ?? []);
     } else {
       setTitle('');
       setContent('');
+      setChecklist([]);
       setIsHidden(false);
       setAttachments([]);
     }
@@ -84,7 +87,7 @@ export function NoteDialog({ open, onClose, note }: NoteDialogProps) {
 
   function handleSave() {
     if (!title.trim()) return;
-    const payload = { title: title.trim(), content: { text: content }, attachments, is_hidden: isHidden };
+    const payload = { title: title.trim(), content: buildDescription(content, checklist), attachments, is_hidden: isHidden };
 
     // Saved successfully: the files are now referenced by the note, so drop them
     // from the cleanup set before closing.
@@ -101,12 +104,22 @@ export function NoteDialog({ open, onClose, note }: NoteDialogProps) {
   }
 
   return (
-    <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      fullWidth
+      maxWidth="sm"
+      // See TaskFormDialog: recompute the outlined TextField's border notch
+      // after the open transition settles, so it never lands on a stale
+      // mid-transition measurement (which shows as the label "crossed out").
+      TransitionProps={{ onEntered: () => window.dispatchEvent(new Event('resize')) }}
+    >
       <DialogTitle>{note ? 'Редактировать заметку' : 'Новая заметка'}</DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} sx={{ mt: 1 }}>
-          <TextField label="Заголовок" value={title} onChange={(e) => setTitle(e.target.value)} fullWidth autoFocus />
+          <TextField label="Заголовок" value={title} onChange={(e) => setTitle(e.target.value)} fullWidth />
           <TextField label="Содержание" value={content} onChange={(e) => setContent(e.target.value)} multiline minRows={5} fullWidth />
+          <ChecklistEditor items={checklist} onChange={setChecklist} />
           <Box>
             <Typography variant="caption" color="text.secondary">Вложения</Typography>
             {/* Uploads go straight to S3 (shared AttachmentUploader). The dialog

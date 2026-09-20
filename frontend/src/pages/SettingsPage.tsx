@@ -14,6 +14,7 @@ import { useAuthStore } from '@/store/authStore';
 import { useUiStore } from '@/store/uiStore';
 import { useThemeStore } from '@/store/themeStore';
 import { TIMEZONE_OPTIONS, detectTimezone } from '@/utils/datetime';
+import { CHARACTER_NAMES, levelToIndex } from '@/utils/characterLevels';
 
 export function SettingsPage() {
   const navigate = useNavigate();
@@ -61,7 +62,8 @@ export function SettingsPage() {
         <Typography sx={{ mt: 0.5 }}>{user?.first_name || 'Пользователь'}</Typography>
         <Divider sx={{ my: 1.5 }} />
         <Typography variant="body2" color="text.secondary">
-          Текущий стрик: {user?.current_streak ?? 0} · Рекорд: {user?.max_streak ?? 0}
+          Уровень {user?.current_streak ?? 1} · {CHARACTER_NAMES[levelToIndex(user?.current_streak ?? 1)]}
+          {' '}· Рекорд: {CHARACTER_NAMES[levelToIndex(user?.max_streak ?? 1)]}
         </Typography>
       </Paper>
 

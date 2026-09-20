@@ -32,7 +32,7 @@ type fakeTaskStore struct {
 }
 
 // ListByUserAndRange returns every fake task whose day falls in [from, to],
-// stamping each with its Date so currentStreak can bucket them by day.
+// stamping each with its Date so currentLevel can bucket them by day.
 func (f *fakeTaskStore) ListByUserAndRange(_ context.Context, _ uuid.UUID, from, to time.Time) ([]*models.Task, error) {
 	var out []*models.Task
 	for key, ts := range f.byDate {
@@ -67,7 +67,7 @@ func tasks(doneFlags ...bool) []*models.Task {
 	return out
 }
 
-func TestCurrentStreak(t *testing.T) {
+func TestCurrentLevel(t *testing.T) {
 	tests := []struct {
 		name       string
 		createdOff int // days before today the user was created
@@ -83,29 +83,29 @@ func TestCurrentStreak(t *testing.T) {
 				-2: tasks(true, true, true),
 				-3: tasks(true),
 			},
-			want: 4,
+			want: 5, // start at 1, +1 per completed day (-3,-2,-1,0)
 		},
 		{
-			name:       "unfinished task today does not reset, today just not counted",
+			name:       "unfinished task today never subtracts, just skips the add",
 			createdOff: -30,
 			days: map[int][]*models.Task{
 				0:  tasks(true, false),
 				-1: tasks(true),
 				-2: tasks(true),
 			},
-			want: 2,
+			want: 3, // 1 + (-2 done) + (-1 done); today unfinished: no change
 		},
 		{
-			name:       "empty today does not reset",
+			name:       "empty today does not change the level",
 			createdOff: -30,
 			days: map[int][]*models.Task{
 				-1: tasks(true),
 				-2: tasks(true),
 			},
-			want: 2,
+			want: 3, // 1 + (-2 done) + (-1 done); today empty: no change
 		},
 		{
-			name:       "unfinished task on a past day ends the streak",
+			name:       "unfinished task on a past day subtracts one, not the whole level",
 			createdOff: -30,
 			days: map[int][]*models.Task{
 				0:  tasks(true),
@@ -113,26 +113,26 @@ func TestCurrentStreak(t *testing.T) {
 				-2: tasks(true, false),
 				-3: tasks(true),
 			},
-			want: 2,
+			want: 3, // 1 +1(-3) -1(-2) +1(-1) +1(0)
 		},
 		{
-			name:       "an inactive past day ends the streak",
+			name:       "a past day with no tasks is neutral",
 			createdOff: -30,
 			days: map[int][]*models.Task{
 				0:  tasks(true),
 				-1: tasks(true),
-				-3: tasks(true),
+				-3: tasks(true), // -2 has no tasks: neutral, not a subtraction
 			},
-			want: 2,
+			want: 4, // 1 +1(-3) +0(-2) +1(-1) +1(0)
 		},
 		{
-			name:       "no tasks anywhere",
+			name:       "no tasks anywhere stays at the floor level",
 			createdOff: -30,
 			days:       map[int][]*models.Task{},
-			want:       0,
+			want:       1,
 		},
 		{
-			name:       "streak counts the day the account was created",
+			name:       "level counts the day the account was created",
 			createdOff: -2,
 			days: map[int][]*models.Task{
 				0:  tasks(true),
@@ -140,7 +140,31 @@ func TestCurrentStreak(t *testing.T) {
 				-2: tasks(true),
 				-3: tasks(true), // before the created_at floor, must be ignored
 			},
-			want: 3,
+			want: 4, // 1 +1(-2) +1(-1) +1(0)
+		},
+		{
+			name:       "level floors at 1 instead of going negative",
+			createdOff: -10,
+			days: map[int][]*models.Task{
+				-1: tasks(true, false),
+				-2: tasks(true, false),
+				-3: tasks(true, false),
+				-4: tasks(true, false),
+				-5: tasks(true, false),
+			},
+			want: 1,
+		},
+		{
+			name:       "level caps at 10 instead of climbing forever",
+			createdOff: -15,
+			days: func() map[int][]*models.Task {
+				m := map[int][]*models.Task{}
+				for i := -15; i <= 0; i++ {
+					m[i] = tasks(true)
+				}
+				return m
+			}(),
+			want: 10,
 		},
 	}
 
@@ -157,12 +181,12 @@ func TestCurrentStreak(t *testing.T) {
 			}
 			svc := NewStreakService(&fakeUserStore{}, &fakeTaskStore{byDate: byDate}, nil)
 
-			got, err := svc.currentStreak(context.Background(), user)
+			got, err := svc.currentLevel(context.Background(), user)
 			if err != nil {
-				t.Fatalf("currentStreak: %v", err)
+				t.Fatalf("currentLevel: %v", err)
 			}
 			if got != tc.want {
-				t.Fatalf("streak = %d, want %d", got, tc.want)
+				t.Fatalf("level = %d, want %d", got, tc.want)
 			}
 		})
 	}
@@ -174,18 +198,19 @@ func TestRecalculateAllUpdatesCurrentAndMax(t *testing.T) {
 		dayKey(-1): tasks(true),
 		dayKey(-2): tasks(true),
 	}
+	// Computed level: 1 (floor) +1(-2) +1(-1) +1(0) = 4.
 
-	// Streak grew past the old record: both current and max move to 3.
+	// Level grew past the old record: both current and max move to 4.
 	grower := &models.User{
 		ID: uuid.New(), Timezone: "UTC",
 		CreatedAt:     time.Now().UTC().AddDate(0, 0, -30),
 		CurrentStreak: 1, MaxStreak: 1,
 	}
-	// Streak collapsed (an old broken day) but the record must be kept.
+	// Level fell back (an old missed day) but the record must be kept.
 	faller := &models.User{
 		ID: uuid.New(), Timezone: "UTC",
 		CreatedAt:     time.Now().UTC().AddDate(0, 0, -30),
-		CurrentStreak: 42, MaxStreak: 42,
+		CurrentStreak: 9, MaxStreak: 9,
 	}
 
 	users := &fakeUserStore{users: []*models.User{grower, faller}}
@@ -195,11 +220,11 @@ func TestRecalculateAllUpdatesCurrentAndMax(t *testing.T) {
 		t.Fatalf("RecalculateAll: %v", err)
 	}
 
-	if got := users.updated[grower.ID]; got != [2]int{3, 3} {
-		t.Fatalf("grower updated to %v, want [3 3]", got)
+	if got := users.updated[grower.ID]; got != [2]int{4, 4} {
+		t.Fatalf("grower updated to %v, want [4 4]", got)
 	}
-	if got := users.updated[faller.ID]; got != [2]int{3, 42} {
-		t.Fatalf("faller updated to %v, want [3 42]", got)
+	if got := users.updated[faller.ID]; got != [2]int{4, 9} {
+		t.Fatalf("faller updated to %v, want [4 9]", got)
 	}
 }
 
@@ -208,10 +233,11 @@ func TestRecalculateAllSkipsWriteWhenUnchanged(t *testing.T) {
 		dayKey(0):  tasks(true),
 		dayKey(-1): tasks(true),
 	}
+	// Computed level: 1 (floor) +1(-1) +1(0) = 3.
 	user := &models.User{
 		ID: uuid.New(), Timezone: "UTC",
 		CreatedAt:     time.Now().UTC().AddDate(0, 0, -30),
-		CurrentStreak: 2, MaxStreak: 5,
+		CurrentStreak: 3, MaxStreak: 5,
 	}
 	users := &fakeUserStore{users: []*models.User{user}}
 	svc := NewStreakService(users, &fakeTaskStore{byDate: byDate}, nil)
@@ -220,15 +246,15 @@ func TestRecalculateAllSkipsWriteWhenUnchanged(t *testing.T) {
 		t.Fatalf("RecalculateAll: %v", err)
 	}
 	if _, wrote := users.updated[user.ID]; wrote {
-		t.Fatalf("expected no write when streak is unchanged, got %v", users.updated[user.ID])
+		t.Fatalf("expected no write when level is unchanged, got %v", users.updated[user.ID])
 	}
 }
 
 func TestStatusIndex(t *testing.T) {
-	cases := map[int]int{0: 0, 1: 0, 2: 1, 9: 1, 10: 2, 19: 2, 20: 3, 59: 6, 60: 7, 100: 7, 101: 8, 500: 8}
-	for streak, want := range cases {
-		if got := StatusIndex(streak); got != want {
-			t.Errorf("StatusIndex(%d) = %d, want %d", streak, got, want)
+	cases := map[int]int{0: 0, 1: 0, 2: 1, 5: 4, 9: 8, 10: 9, 11: 9, 100: 9}
+	for level, want := range cases {
+		if got := StatusIndex(level); got != want {
+			t.Errorf("StatusIndex(%d) = %d, want %d", level, got, want)
 		}
 	}
 }

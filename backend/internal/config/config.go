@@ -22,6 +22,12 @@ type Config struct {
 	BotUsername     string
 	SiteURL         string
 	OpenAIAPIKey    string
+	// OpenAIAPIURL is the base URL for OpenAI's API. Defaults to
+	// https://api.openai.com; set OPENAI_API_PROXY_URL to route requests
+	// through a reverse proxy on networks where the official endpoint
+	// rejects requests (OpenAI returns 403 unsupported_country_region_territory
+	// for some hosting regions).
+	OpenAIAPIURL string
 	S3AccessKeyID   string
 	S3SecretKey     string
 	S3BucketName    string
@@ -51,6 +57,7 @@ func Load() (*Config, error) {
 		BotUsername:    os.Getenv("BOT_USERNAME"),
 		SiteURL:        os.Getenv("SITE_URL"),
 		OpenAIAPIKey:   os.Getenv("OPENAI_API_KEY"),
+		OpenAIAPIURL:   getEnv("OPENAI_API_PROXY_URL", "https://api.openai.com"),
 		S3AccessKeyID:  os.Getenv("S3_ACCESS_KEY_ID"),
 		S3SecretKey:    os.Getenv("S3_SECRET_ACCESS_KEY"),
 		S3BucketName:   os.Getenv("S3_BUCKET_NAME"),

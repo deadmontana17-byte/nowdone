@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, Fab, IconButton, Stack, Typography } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import CategoryIcon from '@mui/icons-material/Category';
@@ -45,6 +45,30 @@ export function HomePage() {
     if (detailId && !isLoading && !detailTask) setDetailId(null);
   }, [detailId, detailTask, isLoading]);
 
+  // Jump to today's date group on first load of a given month (or the closest
+  // day that actually has tasks) instead of leaving the page parked at the
+  // 1st, which is where normal document flow starts.
+  const scrolledForMonth = useRef<string | null>(null);
+  useEffect(() => {
+    if (isLoading || scrolledForMonth.current === from) return;
+    scrolledForMonth.current = from;
+
+    const dates = Array.from(new Set(tasks.map((t) => t.date))).sort();
+    if (dates.length === 0) return;
+
+    const todayStr = toISODate(new Date());
+    // Prefer today; else the most recent day at/before today that has tasks;
+    // else the earliest upcoming day with tasks.
+    const target =
+      dates.find((d) => d === todayStr) ??
+      [...dates].reverse().find((d) => d <= todayStr) ??
+      dates[0];
+
+    requestAnimationFrame(() => {
+      document.getElementById(`day-${target}`)?.scrollIntoView({ behavior: 'auto', block: 'start' });
+    });
+  }, [tasks, isLoading, from]);
+
   function shiftMonth(delta: number) {
     const date = fromISODate(selectedDate);
     date.setMonth(date.getMonth() + delta);
@@ -65,7 +89,21 @@ export function HomePage() {
 
   return (
     <Box>
-      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="space-between"
+        sx={{
+          mb: 2,
+          position: 'sticky',
+          // Sticks right below the app's own sticky header (AppBar + StreakBar),
+          // whose real height is published as --app-bar-height by AppLayout.
+          top: 'var(--app-bar-height, 64px)',
+          zIndex: 2,
+          bgcolor: 'background.default',
+          py: 1,
+        }}
+      >
         <Stack direction="row" alignItems="center" spacing={0.5}>
           <IconButton onClick={() => shiftMonth(-1)}><ChevronLeftIcon /></IconButton>
           {/* Click the month/year label to jump to any month via the picker. */}

@@ -30,7 +30,16 @@ export function TaskTypeDialog({ open, onClose }: TaskTypeDialogProps) {
   }
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth="xs"
+      // See TaskFormDialog: recompute the outlined TextField's border notch
+      // after the open transition settles, so it never lands on a stale
+      // mid-transition measurement (which shows as the label "crossed out").
+      TransitionProps={{ onEntered: () => window.dispatchEvent(new Event('resize')) }}
+    >
       <DialogTitle>Типы задач</DialogTitle>
       <DialogContent>
         {/* mt:1 gives the shrunk "Название" label room — MUI zeroes DialogContent's
@@ -61,17 +70,23 @@ export function TaskTypeDialog({ open, onClose }: TaskTypeDialogProps) {
           // the panel never spills off-screen.
           marginThreshold={8}
           // Cap the panel to the viewport and let it scroll when emoji overflow.
+          // Sized larger than emoji-mart's default so each emoji gets a bigger
+          // touch target on mobile — fewer accidental mis-taps on the wrong emoji.
           PaperProps={{
-            sx: { maxWidth: '90vw', maxHeight: '50vh', overflow: 'auto' },
+            sx: { maxWidth: '95vw', maxHeight: '65vh', overflow: 'auto' },
           }}
         >
           {/* dynamicWidth makes Emoji Mart fill the (capped) Popover width
-              instead of its fixed ~350px, so it fits mobile screens. */}
+              instead of its fixed ~350px, so it fits mobile screens. Fewer
+              columns (perLine) + a larger emojiButtonSize give each emoji a
+              bigger tap target, reducing mis-taps on mobile. */}
           <Picker
             data={data}
             theme={muiTheme.palette.mode}
             dynamicWidth
-            perLine={8}
+            perLine={6}
+            emojiButtonSize={44}
+            emojiSize={26}
             onEmojiSelect={(e: { native: string }) => {
               setEmoji(e.native);
               setPickerAnchor(null);
