@@ -66,33 +66,30 @@ export function TaskTypeDialog({ open, onClose }: TaskTypeDialogProps) {
           // Keep a gap from the screen edges; Popover then flips/repositions so
           // the panel never spills off-screen.
           marginThreshold={8}
-          // No open/scale animation: emoji-mart measures its container's width
-          // (dynamicWidth) as soon as it mounts, and Popover's default Grow
-          // transition scales that container from 0 during the animation — if
-          // the measurement lands mid-scale, emoji-mart lays its grid out for
-          // a too-small width, so the visual size is fine but the tap
-          // coordinates it registers no longer line up with what's on screen.
-          // Skipping the animation removes that race entirely.
           transitionDuration={0}
-          // A fixed, generous width (not just a max-width cap) so the panel is
-          // never the cramped ~280px it could shrink to near a screen edge —
-          // "очень узкое" on phones — and, just as importantly, doesn't change
-          // size after mount for the same reason as transitionDuration above.
+          // maxHeight only — no fixed/forced width. Emoji Mart sizes itself
+          // (see the Picker comment below): letting it size itself and the
+          // Popover just wrap that size is what keeps the two in agreement.
           PaperProps={{
-            sx: { width: 'min(94vw, 380px)', maxHeight: '70vh', overflow: 'auto' },
+            sx: { maxWidth: '95vw', maxHeight: '70vh', overflow: 'auto' },
           }}
         >
-          {/* dynamicWidth makes Emoji Mart fill the (now-stable) Popover width
-              instead of its fixed ~350px. Fewer columns (perLine) + a larger
-              emojiButtonSize give each emoji a bigger, more reliable tap
-              target on mobile. */}
+          {/* No dynamicWidth: it sizes the grid off a ResizeObserver reading of
+              the container's width, which in this Popover was consistently
+              landing on roughly half the panel's actual final width — emoji
+              only filled half the window, and the tap coordinates it computed
+              from that wrong width no longer lined up with what was on
+              screen, hence the wrong-emoji-selected bug. Without it, Emoji
+              Mart lays itself out from perLine × emojiButtonSize directly (no
+              measurement step), so what's drawn and what's tappable always
+              match. A bigger emojiButtonSize than the ~36px default still
+              gives comfortably large touch targets. */}
           <Picker
             data={data}
             theme={muiTheme.palette.mode}
-            dynamicWidth
-            perLine={6}
-            emojiButtonSize={48}
-            emojiSize={28}
+            perLine={8}
+            emojiButtonSize={40}
+            emojiSize={24}
             onEmojiSelect={(e: { native: string }) => {
               setEmoji(e.native);
               setPickerAnchor(null);
