@@ -47,7 +47,7 @@ export function StreakBar() {
         />
         <Box sx={{ flexGrow: 1 }}>
           <Typography variant="caption" color="text.secondary">
-            Уровень {level} · {name} 🔥 (рекорд: {CHARACTER_NAMES[levelToIndex(user.max_streak)]})
+            Уровень {level} · {name} 🔥
           </Typography>
           <LinearProgress variant="determinate" value={progress} sx={{ height: 6, borderRadius: 3, mt: 0.5 }} />
         </Box>

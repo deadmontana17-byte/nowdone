@@ -115,7 +115,12 @@ export function NoteDialog({ open, onClose, note }: NoteDialogProps) {
       TransitionProps={{ onEntered: () => window.dispatchEvent(new Event('resize')) }}
     >
       <DialogTitle>{note ? 'Редактировать заметку' : 'Новая заметка'}</DialogTitle>
-      <DialogContent>
+      <DialogContent
+        // See TaskFormDialog: recompute the notch after every field focus
+        // (delegated — React's synthetic onFocus bubbles), not just once on
+        // the dialog's own opening transition.
+        onFocus={() => window.setTimeout(() => window.dispatchEvent(new Event('resize')), 150)}
+      >
         <Stack spacing={2.5} sx={{ mt: 1 }}>
           <TextField label="Заголовок" value={title} onChange={(e) => setTitle(e.target.value)} fullWidth />
           <TextField label="Содержание" value={content} onChange={(e) => setContent(e.target.value)} multiline minRows={5} fullWidth />

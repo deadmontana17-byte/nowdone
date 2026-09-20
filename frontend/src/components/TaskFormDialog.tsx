@@ -162,7 +162,15 @@ export function TaskFormDialog({ open, onClose, task, defaultDate, taskTypes }: 
       TransitionProps={{ onEntered: () => window.dispatchEvent(new Event('resize')) }}
     >
       <DialogTitle>{task ? 'Редактировать задачу' : 'Новая задача'}</DialogTitle>
-      <DialogContent>
+      <DialogContent
+        // Delegated: catches focus from any descendant TextField (React's
+        // synthetic onFocus bubbles). The dialog-open fix above only ever
+        // fires once; a field can be focused — and the mobile keyboard can
+        // open, resizing/zooming the viewport — at any later point too, so
+        // recompute the notch after every focus, not just the dialog's own
+        // opening transition.
+        onFocus={() => window.setTimeout(() => window.dispatchEvent(new Event('resize')), 150)}
+      >
         <Stack spacing={2.5} sx={{ mt: 1 }}>
           <TextField label="Название" value={title} onChange={(e) => setTitle(e.target.value)} fullWidth />
 
