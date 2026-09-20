@@ -8,6 +8,7 @@ import ClearIcon from '@mui/icons-material/Clear';
 import type { Attachment, ChecklistItem, RecurrenceRule, Task, TaskType } from '@/types';
 import { AttachmentUploader } from '@/components/AttachmentUploader';
 import { ChecklistEditor } from '@/components/ChecklistEditor';
+import { TaskTypeDialog } from '@/components/TaskTypeDialog';
 import { useCreateTask, useUpdateTask } from '@/hooks/useTasks';
 import { useAuthStore } from '@/store/authStore';
 import { apiDeleteUploads } from '@/api/client';
@@ -24,6 +25,10 @@ interface TaskFormDialogProps {
   defaultDate: string;
   taskTypes: TaskType[];
 }
+
+// Sentinel select value for "+ Добавить тип" — distinct from any real
+// type_id (a UUID) or the "Без типа" empty string.
+const ADD_TYPE_OPTION = '__add_type__';
 
 const FREQUENCIES = [
   { value: 'daily', label: 'Каждый день' },
@@ -49,6 +54,7 @@ export function TaskFormDialog({ open, onClose, task, defaultDate, taskTypes }: 
   const [isRecurring, setIsRecurring] = useState(false);
   const [frequency, setFrequency] = useState<RecurrenceRule['frequency']>('daily');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [typeDialogOpen, setTypeDialogOpen] = useState(false);
 
   // S3 keys uploaded during this dialog session. If the user cancels a *new*
   // task, these files were never saved anywhere, so we delete them from S3.
@@ -185,14 +191,34 @@ export function TaskFormDialog({ open, onClose, task, defaultDate, taskTypes }: 
             <AttachmentUploader attachments={attachments} onChange={handleAttachmentsChange} />
           </Box>
 
-          <TextField select label="Тип задачи" value={typeId} onChange={(e) => setTypeId(e.target.value)} fullWidth>
+          <TextField
+            select
+            label="Тип задачи"
+            value={typeId}
+            onChange={(e) => {
+              if (e.target.value === ADD_TYPE_OPTION) {
+                setTypeDialogOpen(true);
+                return;
+              }
+              setTypeId(e.target.value);
+            }}
+            fullWidth
+          >
             <MenuItem value="">Без типа</MenuItem>
+            {/* Only shown when there's nothing to pick from yet — opens type
+                creation without leaving (or losing) this task form. Once a
+                type is created, useCreateTaskType invalidates the shared
+                task-types query, so the list above refills and the new type
+                becomes selectable right away. */}
+            {taskTypes.length === 0 && <MenuItem value={ADD_TYPE_OPTION}>+ Добавить тип</MenuItem>}
             {taskTypes.map((t) => (
               <MenuItem key={t.id} value={t.id}>
                 {t.emoji} {t.name}
               </MenuItem>
             ))}
           </TextField>
+
+          <TaskTypeDialog open={typeDialogOpen} onClose={() => setTypeDialogOpen(false)} />
 
           <TextField
             label="Дата"
